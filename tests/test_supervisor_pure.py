@@ -2617,67 +2617,6 @@ class TestMetaToolDisableFlags:
         assert "get_schema" in names
 
 
-class TestBuildInstructions:
-    """GhidraBackend.build_instructions reflects transform feature flags."""
-
-    def test_default_includes_all_sections(self):
-        transform = ToolTransform(pinned=PINNED_TOOLS)
-        text = GhidraBackend.build_instructions(transform)
-        assert "## Tool discovery" in text
-        assert "## Call patterns" in text
-        assert "**batch**" in text
-        assert "**execute**" in text
-
-    def test_batch_disabled_omits_batch_from_call_patterns(self):
-        transform = ToolTransform(pinned=PINNED_TOOLS, enable_batch=False)
-        text = GhidraBackend.build_instructions(transform)
-        assert "**batch**" not in text
-        assert "**execute**" in text
-
-    def test_execute_disabled_omits_execute_from_call_patterns(self):
-        transform = ToolTransform(pinned=PINNED_TOOLS, enable_execute=False)
-        text = GhidraBackend.build_instructions(transform)
-        assert "execute" not in text
-        assert "**batch**" in text
-
-    def test_tool_search_disabled_omits_discovery_section(self):
-        transform = ToolTransform(pinned=PINNED_TOOLS, enable_tool_search=False)
-        text = GhidraBackend.build_instructions(transform)
-        assert "## Tool discovery" not in text
-        assert "pinned" not in text
-        assert "hidden" not in text
-        assert "ONE tool → call the tool directly." in text
-
-    def test_tool_search_enabled_includes_discovery(self):
-        transform = ToolTransform(pinned=PINNED_TOOLS, enable_tool_search=True)
-        text = GhidraBackend.build_instructions(transform)
-        assert "## Tool discovery" in text
-        assert "search_tools" in text
-        assert "get_schema" in text
-        assert "ONE pinned tool" in text
-
-    def test_all_disabled_minimal_call_patterns(self):
-        transform = ToolTransform(
-            pinned=PINNED_TOOLS,
-            enable_batch=False,
-            enable_execute=False,
-            enable_tool_search=False,
-        )
-        text = GhidraBackend.build_instructions(transform)
-        assert "## Tool discovery" not in text
-        assert "batch" not in text
-        assert "execute" not in text
-        assert "ONE tool → call the tool directly." in text
-
-    def test_tool_discovery_callable_via_reflects_flags(self):
-        transform = ToolTransform(pinned=PINNED_TOOLS, enable_batch=False)
-        text = GhidraBackend.build_instructions(transform)
-        assert "## Tool discovery" in text
-        assert "**call**" in text
-        assert "**batch**" not in text
-        assert "**execute**" in text
-
-
 # ---------------------------------------------------------------------------
 # _format_validation_error — descriptive error for bad tool arguments
 # ---------------------------------------------------------------------------

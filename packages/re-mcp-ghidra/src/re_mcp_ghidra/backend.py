@@ -9,11 +9,73 @@ from __future__ import annotations
 import os
 from typing import TYPE_CHECKING, Any
 
-from re_mcp.backend import BackendInfo, build_instructions
+from re_mcp.backend import BackendInfo
 
 from re_mcp_ghidra import find_ghidra_dir
 from re_mcp_ghidra.exceptions import GhidraError
 from re_mcp_ghidra.transforms import MANAGEMENT_TOOLS, PINNED_TOOLS
+
+INSTRUCTIONS = """\
+Headless Ghidra 12 for reverse engineering native binaries.
+
+Start: open_database(file_path) imports a binary into <dir>/ghidra_projects/ \
+(the directory must be writable); for an existing project pass the .gpr as \
+file_path plus program (list_project_files shows the paths). It returns at once: \
+call wait_for_analysis(database) before anything else. Every other tool takes \
+database (the id open_database returned).
+
+Work loop: read (decompile_function, get_function, get_xrefs_to, list_strings, \
+find_code_by_string) -> plan -> ONE batch per coherent change (renames, \
+prototypes, comments, struct edits), with a label -> re-read to check -> \
+save_database. Use execute (Python 3 against the Ghidra API and every tool) for \
+loops, computed edits, or reads no tool covers; read_only=true for pure reads.
+
+batch and execute are atomic: each runs in ONE transaction; if anything fails \
+NOTHING changes, and the error names the failing op. A success is one undo step \
+"MCP: <label>" (undo removes it). Later ops can use earlier results: "$0.start", \
+"name_${1.address}". Pass if_revision (the revision from your last result) to \
+refuse to act on a program that changed (TargetChanged); pass operation_id on \
+writes so a retry never applies twice.
+
+Finding tools: about 20 tools are listed; ~110 more are found with \
+search_tools("struct|enum") and called through call, batch or execute. \
+get_schema(tools=[...]) gives parameters. ghidra://api/tools.pyi has every tool \
+as a typed Python signature with its documentation.
+
+Addresses: "0x401000", "401000", decimal, or a symbol name ("main"). \
+Paginated results have items, total, offset, limit, has_more.
+
+Names: analysis-created names (FUN_, DAT_, LAB_) are SourceType.DEFAULT; \
+any rename replaces them with a USER_DEFINED name.
+
+Saving: nothing reaches disk until save_database (close_database saves by \
+default). A versioned (Ghidra Server) file must be checked out before it can \
+be saved.
+
+Errors are tool errors with error_type: NotFound, InvalidAddress, \
+InvalidArguments (fix the params; get_schema), TargetChanged (re-read, retry \
+with the new revision), RolledBack, TimeoutError, ScriptError (line and stdout \
+included), NoDatabase (open one first).
+"""
+
+API_STUB_HEADER = '''"""ghidra-mcp-next tool API.
+
+Each def below is one tool. The same signature is what:
+  - a batch op takes: {"tool": "<name>", "params": {...}}  (database is passed to batch)
+  - execute calls:    tools.<name>(**params) -> dict
+
+Inside execute you also have: program / currentProgram (ghidra.program.model.listing.Program),
+flat (ghidra.program.flatapi.FlatProgramAPI), monitor, toAddr(int|str), decompile(func_or_addr)
+-> str, print() (captured as stdout), and any import from the ghidra and java packages, e.g.
+    from ghidra.program.model.symbol import SourceType
+    fm = program.getFunctionManager()
+    for f in fm.getFunctions(True):
+        if f.getName().startswith("FUN_") and f.getBody().getNumAddresses() < 16:
+            f.setName("thunk_" + f.getName()[4:], SourceType.USER_DEFINED)
+    return fm.getFunctionCount()
+"""
+'''
+
 
 if TYPE_CHECKING:
     from fastmcp import FastMCP
@@ -39,30 +101,19 @@ class GhidraBackend:
 
     @staticmethod
     def build_instructions(transform: ToolTransform) -> str:
-        return build_instructions(
-            transform=transform,
-            intro="Ghidra binary analysis server with multi-database support.",
-            file_path_detail=(
-                "file_path is a binary (imported into <dir>/ghidra_projects/, so the "
-                "directory must be writable) or an existing project's .gpr file with "
-                "program set to the program's path inside it."
-            ),
-            uri_scheme="ghidra",
-            resource_prefix="db",
-            workflows=(
-                "- **Triage:** get_database_info → list_functions + get_strings.\n"
-                "- **String search:** find_code_by_string(pattern) combines "
-                "string search + xref + function resolution.\n"
-                "- **Function analysis:** decompile_function, "
-                "disassemble_function, get_call_graph(depth=1).\n"
-                "- **Name search:** list_functions/list_names accept "
-                "filter_pattern.\n"
-                "- **Types:** parse_type_declaration → apply_type_at_address "
-                "for named types; set_type for inline.\n"
-                "- **Language:** set language/compiler_spec explicitly when "
-                "auto-detection fails. Use list_targets to see options."
-            ),
-        )
+        # Claude Code keeps only the first 4,096 characters; tests enforce it.
+        disabled = [
+            name
+            for name, on in (("execute", transform.has_execute), ("batch", transform.has_batch))
+            if not on
+        ]
+        if not disabled:
+            return INSTRUCTIONS
+        return INSTRUCTIONS + f"\nDisabled on this server: {', '.join(disabled)}.\n"
+
+    @staticmethod
+    def api_stub_header() -> str:
+        return API_STUB_HEADER
 
     @staticmethod
     def register_management_tools(mcp: FastMCP, pool: WorkerPoolProvider) -> None:

@@ -277,6 +277,107 @@ def _render_tools_at_detail(tools: Sequence[Tool], detail: ToolDetailLevel) -> s
     return "\n".join(lines)
 
 
+def _resolve_ref(schema: Any, defs: dict[str, Any]) -> Any:
+    if isinstance(schema, dict) and "$ref" in schema:
+        return defs.get(schema["$ref"].rsplit("/", 1)[-1], schema)
+    if isinstance(schema, dict) and len(schema.get("allOf", [])) == 1:
+        return _resolve_ref(schema["allOf"][0], defs)
+    return schema
+
+
+def _shape(schema: Any, defs: dict[str, Any], depth: int = 0) -> str:
+    """Render a JSON schema as a compact type: ``{name: str, items: list[...]}``."""
+    schema = _resolve_ref(schema, defs)
+    if not isinstance(schema, dict):
+        return "any"
+    if schema.get("type") == "array":
+        return f"list[{_shape(schema.get('items'), defs, depth)}]"
+    for key in ("anyOf", "oneOf"):
+        if schema.get(key):
+            return _join_union([_shape(b, defs, depth) for b in schema[key]])
+    props = schema.get("properties")
+    if props and depth < 2:
+        inner = ", ".join(f"{k}: {_shape(v, defs, depth + 1)}" for k, v in props.items())
+        return "{" + inner + "}"
+    return _type_label(schema)
+
+
+def _stub_return(tool: Tool) -> str:
+    """The result's shape, without the ``database`` key routing adds."""
+    schema = tool.output_schema
+    if not schema:
+        return _format_return_type(tool)
+    defs = schema.get("$defs", {})
+    if schema.get("x-fastmcp-wrap-result"):
+        schema = schema.get("properties", {}).get("result", schema)
+    schema = _resolve_ref(schema, defs)
+    if isinstance(schema, dict) and "database" in schema.get("properties", {}):
+        props = {k: v for k, v in schema["properties"].items() if k != "database"}
+        schema = {**schema, "properties": props}
+        if not props:
+            return "dict"
+    return _shape(schema, defs)
+
+
+def _stub_def(tool: Tool) -> list[str]:
+    params = tool.parameters if isinstance(tool.parameters, dict) else {}
+    props = {k: v for k, v in (params.get("properties") or {}).items() if k != "database"}
+    required = set(params.get("required") or [])
+    args = []
+    for name, field in props.items():
+        label = _type_label(field) if isinstance(field, dict) else "any"
+        if name in required:
+            args.append(f"{name}: {label}")
+        elif isinstance(field, dict) and "default" in field:
+            args.append(f"{name}: {label} = {_format_default(field['default'])}")
+        else:
+            args.append(f"{name}: {label} = ...")
+
+    returns = _stub_return(tool)
+    doc = (tool.description or "").strip()
+    param_docs = [
+        f"    {name}: {field['description']}"
+        for name, field in props.items()
+        if isinstance(field, dict) and field.get("description")
+    ]
+    if param_docs:
+        doc += "\n\nArgs:\n" + "\n".join(param_docs)
+    if returns not in ("dict", "str", "None"):
+        doc += f"\n\nReturns: {returns}"
+    doc = doc.replace("\\", "\\\\").replace('"""', "'''")
+    if doc.endswith('"'):
+        doc += " "
+    ret_type = returns if returns in ("dict", "str", "None", "int", "bool") else "dict"
+    return [
+        f"def {tool.name}({', '.join(args)}) -> {ret_type}:",
+        '    """' + "\n    ".join(doc.splitlines()) + '"""',
+        "",
+    ]
+
+
+def render_api_stub(tools: Sequence[Tool], header: str) -> str:
+    """Render the tool catalog as a Python stub: one typed ``def`` per tool.
+
+    Served as the ``<scheme>://api/tools.pyi`` resource.  The same signatures
+    are what ``tools.<name>(**params)`` takes inside execute and what a batch
+    op's ``params`` holds (without ``database``).  Grouped by each tool's
+    first tag.
+    """
+    by_tag: dict[str, list[Tool]] = {}
+    for tool in sorted(tools, key=lambda t: t.name):
+        if tool.name.startswith(INTERNAL_PREFIX) or tool.name in META_TOOLS:
+            continue
+        tag = sorted(tool.tags)[0] if tool.tags else "other"
+        by_tag.setdefault(tag, []).append(tool)
+
+    out = [header.rstrip(), ""]
+    for tag in sorted(by_tag):
+        out += ["", f"# {'=' * 70}", f"# {tag}", f"# {'=' * 70}", ""]
+        for tool in by_tag[tag]:
+            out += _stub_def(tool)
+    return "\n".join(out) + "\n"
+
+
 def env_flag(name: str, *, default: bool = False) -> bool:
     raw = os.environ.get(name, "").strip().lower()
     if raw in ("1", "true", "yes", "on"):

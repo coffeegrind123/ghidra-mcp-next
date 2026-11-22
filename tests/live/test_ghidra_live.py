@@ -13,6 +13,7 @@ of seconds), records what came back, and the tests below assert on it.
 
 from __future__ import annotations
 
+import ast
 import asyncio
 import json
 import os
@@ -71,6 +72,7 @@ async def _scenario(binary: Path) -> dict[str, Any]:
         rec = Recorder(client)
         out["listed"] = [t.name for t in await client.list_tools()]
         out["search"] = await rec("search_tools", pattern=".*")
+        out["api"] = (await client.read_resource("ghidra://api/tools.pyi"))[0].text
 
         opened = await rec("open_database", file_path=str(binary), run_auto_analysis=True)
         db = opened["database"]
@@ -187,6 +189,16 @@ def run(tmp_path_factory: pytest.TempPathFactory) -> dict[str, Any]:
 def test_internal_tools_never_listed(run):
     assert not [n for n in run["listed"] if n.startswith("_")]
     assert "_batch" not in json.dumps(run["search"])
+
+
+def test_listed_catalog_stays_small(run):
+    assert len(run["listed"]) <= 25
+
+
+def test_api_resource_is_a_valid_stub(run):
+    ast.parse(run["api"])
+    assert "def rename_function(" in run["api"]
+    assert "def _batch" not in run["api"]
 
 
 def test_analysis_runs_in_a_transaction(run):

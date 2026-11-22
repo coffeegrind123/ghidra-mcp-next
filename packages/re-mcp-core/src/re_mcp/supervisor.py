@@ -82,6 +82,7 @@ class ProxyMCP(FastMCP):
         )
         self._backend = backend
         self._backend_info = info
+        self._transform = transform
         self._worker_pool = WorkerPoolProvider(backend=backend)
         self.add_provider(self._worker_pool)
         self._register_generic_management_tools()
@@ -212,6 +213,23 @@ class ProxyMCP(FastMCP):
         )
         async def databases_resource() -> str:
             return json.dumps(pool.build_database_list(include_state=True), separators=(",", ":"))
+
+        transform = self._transform
+        header = self._backend.api_stub_header()
+
+        @self.resource(
+            f"{scheme}://api/tools.pyi",
+            name="tool_api",
+            description=(
+                "Every tool as a typed Python stub with its full documentation: the "
+                "signatures batch ops and execute's tools.<name>(...) take."
+            ),
+            mime_type="text/x-python",
+        )
+        async def tool_api_resource(ctx: Context) -> str:
+            from re_mcp.transforms import render_api_stub  # noqa: PLC0415
+
+            return render_api_stub(await transform.get_tool_catalog(ctx), header)
 
 
 def _install_signal_handlers(loop: asyncio.AbstractEventLoop) -> None:

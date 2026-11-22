@@ -6,35 +6,23 @@
 
 from re_mcp.transforms import MANAGEMENT_TOOLS, META_TOOLS
 
+# Listed tools: lifecycle, meta tools, and the read loop. Everything else is
+# found with search_tools and called through call / batch / execute; keeping
+# the listed set small keeps the catalog in every request small.
 PINNED_TOOLS = frozenset(
     {
         *MANAGEMENT_TOOLS,
         *META_TOOLS,
-        # Exploration
+        "list_project_files",
         "get_database_info",
         "list_functions",
-        "get_strings",
+        "get_function",
         "decompile_function",
         "disassemble_function",
-        "list_names",
-        "find_code_by_string",
         "get_xrefs_to",
         "get_xrefs_from",
-        # Mutation
-        "rename_function",
-        "set_comment",
-        "set_decompiler_comment",
-        # Structs
-        "list_structures",
-        "get_structure",
-        "create_structure",
-        "add_struct_member",
-        "retype_struct_member",
-        # Types
-        "list_local_types",
-        "parse_type_declaration",
-        "apply_type_at_address",
-        "get_type_info",
-        "set_type",
+        "list_strings",
+        "find_code_by_string",
+        "undo",
     }
 )
