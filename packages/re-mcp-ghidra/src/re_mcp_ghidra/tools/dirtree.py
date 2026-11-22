@@ -11,6 +11,8 @@ functions and code into folders.
 
 from __future__ import annotations
 
+from typing import Annotated
+
 from fastmcp import FastMCP
 from pydantic import BaseModel, Field
 
@@ -142,12 +144,25 @@ def register(mcp: FastMCP) -> None:
 
     @mcp.tool(annotations=ANNO_MUTATE, tags={"metadata"})
     @session.require_open
-    def create_program_tree_folder(tree: str, path: str) -> FolderActionResult:
-        """Create a new folder (module) in the program tree.
+    def create_program_tree_folder(
+        tree: Annotated[
+            str,
+            Field(
+                description="Program tree name; Ghidra's default tree is 'Program Tree'. "
+                "Example: 'Program Tree'"
+            ),
+        ],
+        path: Annotated[
+            str,
+            Field(
+                description="Slash-separated path of the folder to create; every parent "
+                "must already exist. Example: '/crypto/aes'"
+            ),
+        ],
+    ) -> FolderActionResult:
+        """Create one folder (module) in a program tree under an existing parent folder.
 
-        Args:
-            tree: Program tree name.
-            path: Full path of the folder to create (e.g. "/crypto/aes").
+        Use list_program_tree to see the current layout. Returns tree and path.
         """
         root = _get_tree_root(tree)
         parts = [p for p in path.strip("/").split("/") if p]
@@ -172,16 +187,29 @@ def register(mcp: FastMCP) -> None:
 
     @mcp.tool(annotations=ANNO_MUTATE, tags={"metadata"})
     @session.require_open
-    def rename_program_tree_folder(tree: str, old_path: str, new_path: str) -> FolderActionResult:
-        """Rename a folder (module) in the program tree.
+    def rename_program_tree_folder(
+        tree: Annotated[
+            str,
+            Field(
+                description="Program tree name; Ghidra's default tree is 'Program Tree'. "
+                "Example: 'Program Tree'"
+            ),
+        ],
+        old_path: Annotated[
+            str,
+            Field(description="Current slash-separated folder path. Example: '/crypto/aes'"),
+        ],
+        new_path: Annotated[
+            str,
+            Field(
+                description="Path whose last component becomes the new name; its parent "
+                "part is ignored, so the folder never moves. Example: '/crypto/aes256'"
+            ),
+        ],
+    ) -> FolderActionResult:
+        """Rename a program-tree folder in place; it is not moved to another parent.
 
-        The new_path should have the same parent; only the leaf name
-        is changed.
-
-        Args:
-            tree: Program tree name.
-            old_path: Current path of the folder.
-            new_path: New path for the folder.
+        Returns tree, path (= new_path), old_path and new_path.
         """
         root = _get_tree_root(tree)
         module = _resolve_module(root, old_path)
@@ -204,14 +232,26 @@ def register(mcp: FastMCP) -> None:
 
     @mcp.tool(annotations=ANNO_DESTRUCTIVE, tags={"metadata"})
     @session.require_open
-    def delete_program_tree_folder(tree: str, path: str) -> FolderActionResult:
-        """Delete a folder (module) from the program tree.
+    def delete_program_tree_folder(
+        tree: Annotated[
+            str,
+            Field(
+                description="Program tree name; Ghidra's default tree is 'Program Tree'. "
+                "Example: 'Program Tree'"
+            ),
+        ],
+        path: Annotated[
+            str,
+            Field(
+                description="Slash-separated path of the folder to delete; the root "
+                "cannot be deleted. Example: '/crypto/aes'"
+            ),
+        ],
+    ) -> FolderActionResult:
+        """Delete an empty folder (module) from a program tree.
 
-        The folder must be empty (no children) to be deleted.
-
-        Args:
-            tree: Program tree name.
-            path: Path of the folder to delete.
+        Code is not deleted; only the tree grouping is. Fails with NotFound when the
+        folder does not exist. Returns tree and path.
         """
         root = _get_tree_root(tree)
 

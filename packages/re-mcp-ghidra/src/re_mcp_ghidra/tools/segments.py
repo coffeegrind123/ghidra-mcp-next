@@ -6,6 +6,8 @@
 
 from __future__ import annotations
 
+from typing import Annotated
+
 from fastmcp import FastMCP
 from pydantic import BaseModel, Field
 
@@ -91,18 +93,22 @@ def register(mcp: FastMCP) -> None:
     @mcp.tool(annotations=ANNO_MUTATE, tags={"segments"})
     @session.require_open
     def create_memory_block(
-        name: str,
+        name: Annotated[str, Field(description="Name for the new block. Example: '.mydata'")],
         start_address: Address,
         end_address: Address,
-        permissions: str = "RW-",
+        permissions: Annotated[
+            str,
+            Field(
+                description="Three-character R/W/X string, '-' for an absent permission "
+                "(case-insensitive, short strings are padded with '-'). Example: 'R-X'"
+            ),
+        ] = "RW-",
     ) -> CreateSegmentResult:
-        """Create a new initialized memory block (segment).
+        """Create a new zero-filled, initialized memory block from start_address to end_address.
 
-        Args:
-            name: Name for the block (e.g. ".mydata").
-            start_address: Start address of the block.
-            end_address: End address of the block (exclusive).
-            permissions: Permission string like "RWX", "R--", "RW-".
+        end_address is exclusive and must be greater than start_address. Use
+        set_memory_block_permissions or rename_memory_block to change an existing block.
+        Returns name, start, end (exclusive), permissions and status "created".
         """
         from ghidra.util.task import TaskMonitor  # noqa: PLC0415
 
@@ -151,10 +157,11 @@ def register(mcp: FastMCP) -> None:
     def delete_memory_block(
         address: Address,
     ) -> DeleteSegmentResult:
-        """Delete the memory block containing the given address.
+        """Delete the whole memory block containing an address, along with its bytes.
 
-        Args:
-            address: Any address within the memory block to delete.
+        Any address inside the block selects it; fails with NotFound when none does.
+        Returns the removed block's name, start, end (exclusive), old_permissions and
+        status "deleted".
         """
         from ghidra.util.task import TaskMonitor  # noqa: PLC0415
 
@@ -190,13 +197,15 @@ def register(mcp: FastMCP) -> None:
     @session.require_open
     def rename_memory_block(
         address: Address,
-        new_name: str,
+        new_name: Annotated[
+            str, Field(description="New name for the block. Example: '.rdata_decrypted'")
+        ],
     ) -> SetSegmentNameResult:
-        """Rename a memory block.
+        """Rename the memory block (segment) containing an address.
 
-        Args:
-            address: Any address within the memory block.
-            new_name: New name for the block.
+        Any address inside the block selects it. Only the name changes; use
+        set_memory_block_permissions for R/W/X. Returns old_name, new_name and status
+        "renamed".
         """
         program = session.program
         addr = resolve_address(address)
@@ -220,13 +229,18 @@ def register(mcp: FastMCP) -> None:
     @session.require_open
     def set_memory_block_permissions(
         address: Address,
-        permissions: str,
+        permissions: Annotated[
+            str,
+            Field(
+                description="Three-character R/W/X string, '-' for an absent permission "
+                "(case-insensitive, short strings are padded with '-'). Example: 'R-X'"
+            ),
+        ],
     ) -> SetSegmentPermissionsResult:
-        """Change memory block permissions (e.g., RWX, R-X, RW-).
+        """Replace the read/write/execute flags of the memory block containing an address.
 
-        Args:
-            address: Any address within the memory block.
-            permissions: Permission string like "RWX", "R-X", "RW-".
+        Any address inside the block selects it. Returns the block name,
+        old_permissions, the requested permissions and status "updated".
         """
         program = session.program
         addr = resolve_address(address)

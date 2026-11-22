@@ -6,6 +6,8 @@
 
 from __future__ import annotations
 
+from typing import Annotated, Literal
+
 from fastmcp import FastMCP
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -94,15 +96,22 @@ def register(mcp: FastMCP) -> None:
     def add_code_xref(
         from_address: Address,
         to_address: Address,
-        xref_type: str = "UNCONDITIONAL_CALL",
+        xref_type: Annotated[
+            Literal[
+                "UNCONDITIONAL_CALL",
+                "CONDITIONAL_CALL",
+                "UNCONDITIONAL_JUMP",
+                "CONDITIONAL_JUMP",
+                "FALL_THROUGH",
+            ],
+            Field(description="Control-flow reference kind. Example: 'UNCONDITIONAL_JUMP'"),
+        ] = "UNCONDITIONAL_CALL",
     ) -> XrefManipResult:
-        """Add a code cross-reference between two addresses.
+        """Add a user-defined call, jump or fall-through reference between two addresses.
 
-        Args:
-            from_address: Source address of the reference.
-            to_address: Target address of the reference.
-            xref_type: Reference type -- "UNCONDITIONAL_CALL", "CONDITIONAL_CALL",
-                "UNCONDITIONAL_JUMP", "CONDITIONAL_JUMP", or "FALL_THROUGH".
+        Use for flow the analyzer missed, such as an indirect call target; use
+        add_data_xref for reads, writes or pointers to data. Returns the from and to
+        addresses and type.
         """
         from ghidra.program.model.symbol import SourceType  # noqa: PLC0415
 
@@ -133,15 +142,16 @@ def register(mcp: FastMCP) -> None:
     def add_data_xref(
         from_address: Address,
         to_address: Address,
-        xref_type: str = "READ",
+        xref_type: Annotated[
+            Literal["READ", "WRITE", "READ_WRITE", "DATA", "INDIRECTION"],
+            Field(description="Data-access reference kind. Example: 'WRITE'"),
+        ] = "READ",
     ) -> XrefManipResult:
-        """Add a data cross-reference between two addresses.
+        """Add a user-defined data reference (read, write, pointer) between two addresses.
 
-        Args:
-            from_address: Source address of the reference.
-            to_address: Target address of the reference.
-            xref_type: Reference type -- "READ", "WRITE", "READ_WRITE",
-                "DATA", or "INDIRECTION".
+        Use when code or data accesses a location the analyzer did not link; use
+        add_code_xref for calls, jumps and fall-through. Returns the from and to
+        addresses and type.
         """
         from ghidra.program.model.symbol import SourceType  # noqa: PLC0415
 
@@ -173,11 +183,10 @@ def register(mcp: FastMCP) -> None:
         from_address: Address,
         to_address: Address,
     ) -> DeleteXrefResult:
-        """Delete a code cross-reference.
+        """Remove the control-flow (call/jump) reference from one address to another.
 
-        Args:
-            from_address: Source address of the reference to remove.
-            to_address: Target address of the reference to remove.
+        Matches only flow references; use delete_data_xref for data references. Fails
+        with NotFound when no such reference exists. Returns the from and to addresses.
         """
         program = session.program
         ref_mgr = program.getReferenceManager()
@@ -219,11 +228,10 @@ def register(mcp: FastMCP) -> None:
         from_address: Address,
         to_address: Address,
     ) -> DeleteXrefResult:
-        """Delete a data cross-reference.
+        """Remove the data (read/write/pointer) reference from one address to another.
 
-        Args:
-            from_address: Source address of the reference to remove.
-            to_address: Target address of the reference to remove.
+        Matches only data references; use delete_code_xref for calls and jumps. Fails
+        with NotFound when no such reference exists. Returns the from and to addresses.
         """
         program = session.program
         ref_mgr = program.getReferenceManager()

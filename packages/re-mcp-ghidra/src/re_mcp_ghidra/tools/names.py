@@ -6,6 +6,8 @@
 
 from __future__ import annotations
 
+from typing import Annotated
+
 from fastmcp import FastMCP
 from pydantic import BaseModel, Field
 
@@ -66,8 +68,19 @@ def register(mcp: FastMCP) -> None:
 
     @mcp.tool(annotations=ANNO_MUTATE, tags={"names"})
     @session.require_open
-    def rename_symbol(address: Address, new_name: str) -> RenameResult:
-        """Rename a label/symbol at an address."""
+    def rename_symbol(
+        address: Address,
+        new_name: Annotated[
+            str,
+            Field(description="New name for the symbol. Example: 'g_config_key'"),
+        ],
+    ) -> RenameResult:
+        """Rename the primary symbol at an address, or create a label if it has none.
+
+        Works for any address (data, code labels, function entries); rename_function
+        is the function-specific variant. Returns address, old_name (the address
+        itself when there was no symbol) and new_name.
+        """
         from ghidra.program.model.symbol import SourceType  # noqa: PLC0415
 
         program = session.program

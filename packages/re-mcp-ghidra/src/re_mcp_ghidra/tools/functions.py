@@ -6,8 +6,10 @@
 
 from __future__ import annotations
 
+from typing import Annotated
+
 from fastmcp import FastMCP
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from re_mcp_ghidra.exceptions import GhidraError
 from re_mcp_ghidra.helpers import (
@@ -101,7 +103,13 @@ def register(mcp: FastMCP) -> None:
     @mcp.tool(annotations=ANNO_READ_ONLY, tags={"functions"})
     @session.require_open
     def get_function(address: Address) -> FunctionDetail:
-        """Get detailed information about a function."""
+        """Describe the function containing an address: bounds, signature and flags.
+
+        Use list_functions to enumerate functions, decompile_function or
+        disassemble_function for its body. Returns name, start, end (exclusive), size
+        (bytes in body), calling_convention, signature, is_thunk, is_external, comment
+        and entry_point.
+        """
         func = resolve_function(address)
         body = func.getBody()
         entry = func.getEntryPoint()
@@ -124,7 +132,12 @@ def register(mcp: FastMCP) -> None:
     @mcp.tool(annotations=ANNO_READ_ONLY, tags={"functions", "decompiler"})
     @session.require_open
     def decompile_function(address: Address) -> DecompilationResult:
-        """Decompile a function to C pseudocode using Ghidra's decompiler."""
+        """Decompile the function containing an address to C pseudocode.
+
+        Use disassemble_function for the machine instructions instead. Fails with
+        DecompilationFailed when Ghidra's decompiler gives up (60 s timeout). Returns
+        function_name, address (entry) and decompiled_code (the C text).
+        """
         from ghidra.app.decompiler import DecompInterface  # noqa: PLC0415
         from ghidra.util.task import TaskMonitor  # noqa: PLC0415
 
@@ -158,7 +171,12 @@ def register(mcp: FastMCP) -> None:
     @mcp.tool(annotations=ANNO_READ_ONLY, tags={"functions"})
     @session.require_open
     def disassemble_function(address: Address) -> DisassemblyResult:
-        """Disassemble a function into individual instructions."""
+        """List every instruction in the body of the function containing an address.
+
+        Use decompile_function for C pseudocode, disassemble_at to turn undefined bytes
+        into code. Returns function_name, start, end, instruction_count and
+        instructions, each with address, bytes (hex), mnemonic and operands.
+        """
         func = resolve_function(address)
         program = session.program
         listing = program.getListing()
@@ -202,8 +220,19 @@ def register(mcp: FastMCP) -> None:
 
     @mcp.tool(annotations=ANNO_MUTATE, tags={"functions"})
     @session.require_open
-    def rename_function(address: Address, new_name: str) -> RenameResult:
-        """Rename a function."""
+    def rename_function(
+        address: Address,
+        new_name: Annotated[
+            str,
+            Field(description="New function name (user-defined). Example: 'parse_config'"),
+        ],
+    ) -> RenameResult:
+        """Rename the function containing an address.
+
+        Address may point anywhere inside the function. For labels, data or other
+        symbols use rename_symbol. Returns address (function entry), old_name and
+        new_name.
+        """
         from ghidra.program.model.symbol import SourceType  # noqa: PLC0415
 
         func = resolve_function(address)
@@ -226,7 +255,11 @@ def register(mcp: FastMCP) -> None:
     @mcp.tool(annotations=ANNO_MUTATE, tags={"functions"})
     @session.require_open
     def delete_function(address: Address) -> DeleteFunctionResult:
-        """Delete a function definition (does not delete the bytes)."""
+        """Remove the function definition containing an address; instructions stay.
+
+        Undoes create_function: the code and bytes remain but are no longer grouped as
+        a function. Returns address (former entry), name and status "deleted".
+        """
         func = resolve_function(address)
         name = func.getName()
         entry = func.getEntryPoint()

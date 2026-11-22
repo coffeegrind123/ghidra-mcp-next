@@ -13,6 +13,7 @@ The property ``"Color"`` stores an RGB integer on each code unit.
 from __future__ import annotations
 
 import contextlib
+from typing import Annotated, Literal
 
 from fastmcp import FastMCP
 from pydantic import BaseModel, Field
@@ -78,22 +79,26 @@ def register(mcp: FastMCP) -> None:
     @session.require_open
     def set_color(
         address: Address,
-        color: str,
-        what: str = "item",
+        color: Annotated[
+            str,
+            Field(
+                description="RGB as six hex digits, with or without a leading '#'; an "
+                "empty string removes the color. Example: '#FF0000'"
+            ),
+        ],
+        what: Annotated[
+            Literal["item", "func"],
+            Field(
+                description="item colors the code unit at the address; func colors every "
+                "code unit of the containing function. Example: 'func'"
+            ),
+        ] = "item",
     ) -> SetColorResult:
-        """Set the background color of an address or function.
+        """Set or clear the background color of a code unit or of a whole function.
 
-        Ghidra stores per-address colors as an integer property on code
-        units.  In headless mode some rendering-level coloring is
-        unavailable; this sets the ``Color`` property that the Ghidra UI
-        reads when available.
-
-        Args:
-            address: The address to colorize.
-            color: Color as hex RGB string (e.g. "#FF0000" for red).
-                Use empty string "" to remove color.
-            what: What to color -- "item" (single address) or "func"
-                (all addresses in the containing function).
+        Writes the code units' "Color" integer property, which the Ghidra UI reads; use
+        get_color to read it back. Returns address, old_color (#RRGGBB at the given
+        address, null if unset), color (#RRGGBB, or "default" when cleared) and what.
         """
         if what not in ("item", "func"):
             raise GhidraError(
@@ -172,14 +177,18 @@ def register(mcp: FastMCP) -> None:
     @session.require_open
     def get_color(
         address: Address,
-        what: str = "item",
+        what: Annotated[
+            Literal["item", "func"],
+            Field(
+                description="item reads the code unit at the address; func reads the "
+                "color at the containing function's entry point. Example: 'item'"
+            ),
+        ] = "item",
     ) -> GetColorResult:
-        """Get the background color of an address.
+        """Read the background color set on a code unit or a function's entry.
 
-        Args:
-            address: The address to query.
-            what: What to query -- "item" or "func" (reads color at
-                function entry point).
+        Read-only; use set_color to change it. Returns address (the entry point when
+        what is func), what, color (#RRGGBB, null if unset) and has_color.
         """
         if what not in ("item", "func"):
             raise GhidraError(

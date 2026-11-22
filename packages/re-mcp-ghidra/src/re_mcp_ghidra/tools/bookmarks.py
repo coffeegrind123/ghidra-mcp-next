@@ -6,6 +6,8 @@
 
 from __future__ import annotations
 
+from typing import Annotated
+
 from fastmcp import FastMCP
 from pydantic import BaseModel, Field
 
@@ -59,15 +61,19 @@ def register(mcp: FastMCP) -> None:
     @session.require_open
     def set_bookmark(
         address: Address,
-        description: str = "",
-        category: str = "Analysis",
+        description: Annotated[
+            str,
+            Field(description="Free-text note stored on the bookmark. Example: 'C2 beacon loop'"),
+        ] = "",
+        category: Annotated[
+            str,
+            Field(description="Free-form category used to group bookmarks. Example: 'Suspicious'"),
+        ] = "Analysis",
     ) -> SetBookmarkResult:
-        """Set a bookmark at an address.
+        """Add a Note-type bookmark at an address under a category, with a description.
 
-        Args:
-            address: Address to bookmark.
-            description: Description for the bookmark.
-            category: Bookmark category (e.g. "Analysis", "Suspicious", "TODO").
+        Use list_bookmarks to enumerate and delete_bookmark to remove them. Returns
+        address, category, description and status "ok".
         """
         program = session.program
         addr = resolve_address(address)
@@ -120,14 +126,18 @@ def register(mcp: FastMCP) -> None:
     @session.require_open
     def delete_bookmark(
         address: Address,
-        category: str = "",
+        category: Annotated[
+            str,
+            Field(
+                description="Only delete bookmarks in this exact category; empty string "
+                "deletes every bookmark at the address. Example: 'Suspicious'"
+            ),
+        ] = "",
     ) -> DeleteBookmarkResult:
-        """Delete bookmark(s) at an address.
+        """Delete the bookmarks at an address, optionally only those in one category.
 
-        Args:
-            address: Address of the bookmark(s) to delete.
-            category: If provided, only delete bookmarks in this category.
-                Empty string deletes all bookmarks at the address.
+        Fails with NotFound when nothing matches. Returns address, the category filter
+        used and removed_count.
         """
         program = session.program
         addr = resolve_address(address)

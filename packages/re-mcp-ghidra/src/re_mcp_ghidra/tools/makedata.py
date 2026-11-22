@@ -99,18 +99,26 @@ def register(mcp: FastMCP) -> None:
     @session.require_open
     def create_data(
         address: Address,
-        data_type: Literal["byte", "word", "dword", "qword", "float", "double"],
+        data_type: Annotated[
+            Literal["byte", "word", "dword", "qword", "float", "double"],
+            Field(
+                description="Primitive type: byte (8-bit), word (16), dword (32), qword (64), "
+                "float (32-bit IEEE) or double (64-bit IEEE). Example: 'dword'"
+            ),
+        ],
         count: Annotated[
-            int, Field(description="Number of elements (>1 creates an array).", ge=1)
+            int,
+            Field(
+                description="Number of elements; above 1 creates an array of that type. Example: 4",
+                ge=1,
+            ),
         ] = 1,
     ) -> MakeDataResult:
-        """Mark bytes as a primitive data type (byte/word/dword/qword/float/double).
+        """Define a primitive numeric data item (or array of them) at an address.
 
-        Args:
-            address: Address to define.
-            data_type: Data type -- "byte", "word" (16-bit), "dword" (32-bit),
-                "qword" (64-bit), "float" (32-bit), or "double" (64-bit).
-            count: Number of elements (>1 creates an array).
+        Clears existing code units in the range first. Use create_string for text,
+        create_array for integer arrays by element size, set_type for named/C types.
+        Returns address, data_type, size (total bytes), count and status "ok".
         """
         from ghidra.program.model.data import ArrayDataType  # noqa: PLC0415
 
@@ -154,16 +162,25 @@ def register(mcp: FastMCP) -> None:
     @session.require_open
     def create_string(
         address: Address,
-        length: int = 0,
-        string_type: str = "c",
+        length: Annotated[
+            int,
+            Field(
+                description="Fixed length in bytes, defined as a plain (non-terminated) "
+                "string; 0 auto-detects a null-terminated string. Example: 16"
+            ),
+        ] = 0,
+        string_type: Annotated[
+            Literal["c", "utf16", "utf32"],
+            Field(
+                description="Encoding for auto-detected strings: c (null-terminated "
+                "ASCII/UTF-8), utf16 or utf32. Ignored when length > 0. Example: 'utf16'"
+            ),
+        ] = "c",
     ) -> MakeStringResult:
-        """Mark bytes as a string (auto-detect length if omitted).
+        """Define a string data item at an address, auto-sizing to the terminator by default.
 
-        Args:
-            address: Address of the string.
-            length: String length in bytes (0 for auto-detect null-terminated).
-            string_type: String encoding -- "c" (ASCII/UTF-8), "utf16" (UTF-16),
-                "utf32" (UTF-32).
+        Use list_strings to find existing strings, create_data for numeric data.
+        Returns address, length (actual bytes defined), string_type and status "ok".
         """
         from ghidra.program.model.data import (  # noqa: PLC0415
             StringDataType,
@@ -226,15 +243,22 @@ def register(mcp: FastMCP) -> None:
     @session.require_open
     def create_array(
         address: Address,
-        element_size: int,
-        count: Annotated[int, Field(description="Number of elements in the array.", ge=1)],
+        element_size: Annotated[
+            Literal[1, 2, 4, 8],
+            Field(
+                description="Element size in bytes, mapped to byte, word, dword or qword. "
+                "Example: 4"
+            ),
+        ],
+        count: Annotated[
+            int, Field(description="Number of elements in the array. Example: 256", ge=1)
+        ],
     ) -> MakeArrayResult:
-        """Mark a contiguous run of bytes as an array.
+        """Define an array of unsigned integer elements (1/2/4/8 bytes each) at an address.
 
-        Args:
-            address: Address of the array start.
-            element_size: Size of each element in bytes (1, 2, 4, or 8).
-            count: Number of elements in the array.
+        Clears existing code units in the range first. Use create_data for float/double
+        arrays, set_type or apply_type_at_address for arrays of named types. Returns
+        address, element_size, count, total_size and status "ok".
         """
         from ghidra.program.model.data import (  # noqa: PLC0415
             ArrayDataType,

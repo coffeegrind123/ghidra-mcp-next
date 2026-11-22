@@ -110,14 +110,11 @@ def register(mcp: FastMCP) -> None:
         offset: Offset = 0,
         limit: Limit = 100,
     ) -> dict:
-        """Find all switch/jump tables by scanning for computed jump instructions.
+        """Scan every function for computed-jump instructions (switch/jump tables), paginated.
 
-        Iterates all functions and finds instructions with computed jump
-        flow types. May be slow on large binaries.
-
-        Args:
-            offset: Pagination offset.
-            limit: Maximum number of results.
+        Slow on large binaries; use get_switch_info on one returned address to list its
+        targets. Returns items (each with address, function, num_cases = reference
+        targets), total, offset, limit and has_more.
         """
         program = session.program
         listing = program.getListing()

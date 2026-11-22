@@ -6,6 +6,8 @@
 
 from __future__ import annotations
 
+from typing import Annotated
+
 from fastmcp import FastMCP
 from pydantic import BaseModel, Field
 
@@ -50,7 +52,12 @@ def register(mcp: FastMCP) -> None:
         offset: Offset = 0,
         limit: Limit = 100,
     ) -> dict:
-        """Get all cross-references pointing TO an address."""
+        """List incoming references: every place that calls, jumps to or accesses an address.
+
+        Answers "who uses this?"; use get_xrefs_from for what the code at an address
+        refers to. Returns a page dict (items, total, offset, limit, has_more); each item
+        has from_address, from_function, ref_type and is_call.
+        """
         program = session.program
         ref_mgr = program.getReferenceManager()
         func_mgr = program.getFunctionManager()
@@ -78,7 +85,12 @@ def register(mcp: FastMCP) -> None:
         offset: Offset = 0,
         limit: Limit = 100,
     ) -> dict:
-        """Get all cross-references FROM an address."""
+        """List outgoing references: what the instruction or data at an address refers to.
+
+        Answers "what does this use?"; use get_xrefs_to for incoming references. Returns
+        a page dict (items, total, offset, limit, has_more); each item has to_address,
+        to_function, ref_type and is_call.
+        """
         program = session.program
         ref_mgr = program.getReferenceManager()
         func_mgr = program.getFunctionManager()
@@ -103,13 +115,20 @@ def register(mcp: FastMCP) -> None:
     @session.require_open
     def get_call_graph(
         address: Address,
-        depth: int = 1,
+        depth: Annotated[
+            int,
+            Field(
+                description="Levels of callers and callees to expand; values outside "
+                "1-3 are clamped. Example: 2"
+            ),
+        ] = 1,
     ) -> CallGraphEntry:
-        """Get the call graph around a function (callers and callees).
+        """Build the caller/callee tree around the function containing an address.
 
-        Args:
-            address: Function address.
-            depth: Recursion depth (1-3).
+        Function-level view; use get_xrefs_to / get_xrefs_from for individual
+        references. Returns name, address, callers and callees; at depth > 1 each
+        caller/callee is itself a nested node, at the last level just name and address.
+        Functions already visited are skipped.
         """
         if depth < 1:
             depth = 1

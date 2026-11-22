@@ -6,7 +6,7 @@
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Annotated, Literal
 
 from fastmcp import FastMCP
 from pydantic import BaseModel, Field
@@ -53,20 +53,23 @@ def register(mcp: FastMCP) -> None:
     @session.require_open
     def set_operand_format(
         address: Address,
-        operand_num: int,
-        display_format: Literal["hex", "decimal", "binary", "octal", "char"],
+        operand_num: Annotated[
+            int,
+            Field(
+                description="0-based operand index of the instruction; must hold a "
+                "scalar. Ignored for data. Example: 1"
+            ),
+        ],
+        display_format: Annotated[
+            Literal["hex", "decimal", "binary", "octal", "char"],
+            Field(description="How the value should be displayed. Example: 'decimal'"),
+        ],
     ) -> SetOperandFormatResult:
-        """Change an operand's numeric display format (hex/dec/bin/oct/char).
+        """Change how a numeric operand or data value is displayed (hex/dec/bin/oct/char).
 
-        For instructions, applies a display equate (Ghidra's equivalent of
-        IDA's operand format change).  For data, sets the format setting
-        directly on the code unit.
-
-        Args:
-            address: Instruction address.
-            operand_num: Operand index (0-based).
-            display_format: Display format -- "hex", "decimal", "binary", "octal",
-                or "char".
+        Display-only: on an instruction it applies an equate named after the formatted
+        value; on a data item it sets the format setting. Bytes are unchanged. Returns
+        address, operand and format.
         """
         from ghidra.program.model.listing import Data, Instruction  # noqa: PLC0415
 

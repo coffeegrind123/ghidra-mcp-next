@@ -6,6 +6,8 @@
 
 from __future__ import annotations
 
+from typing import Annotated
+
 from fastmcp import FastMCP
 from pydantic import BaseModel, Field
 
@@ -71,13 +73,19 @@ def _try_demangle(name: str) -> str | None:
 def register(mcp: FastMCP) -> None:
     @mcp.tool(annotations=ANNO_READ_ONLY, tags={"utility", "symbols"})
     @session.require_open
-    def demangle_name(name: str) -> DemangleResult:
-        """Demangle a C++ symbol name to readable form.
+    def demangle_name(
+        name: Annotated[
+            str,
+            Field(
+                description="Mangled symbol string, e.g. Itanium or MSVC. Example: '_ZN3FooC1Ev'"
+            ),
+        ],
+    ) -> DemangleResult:
+        """Demangle a symbol string you already have, using Ghidra's demanglers.
 
-        Example: ``_ZN3FooC1Ev`` -> ``Foo::Foo(void)``.
-
-        Args:
-            name: The mangled symbol name.
+        Nothing in the program is read or changed; use demangle_at_address to demangle
+        the symbol at an address. Returns name, demangled (null when not mangled) and
+        is_mangled.
         """
         demangled = _try_demangle(name)
         return DemangleResult(
@@ -91,10 +99,11 @@ def register(mcp: FastMCP) -> None:
     def demangle_at_address(
         address: Address,
     ) -> DemangleAtAddressResult:
-        """Demangle the symbol name at a given address.
+        """Demangle the primary symbol name at an address; read-only.
 
-        Args:
-            address: Address or symbol name to demangle.
+        Use demangle_name for a bare string, list_demangled_names to scan all symbols.
+        Returns address, name (null when the address has no symbol), demangled (null
+        when not mangled) and is_mangled.
         """
         program = session.program
         addr = resolve_address(address)

@@ -58,14 +58,12 @@ def register(mcp: FastMCP) -> None:
         start_address: Address,
         end_address: Address,
     ) -> ReanalyzeRangeResult:
-        """Reanalyze an address range by running Ghidra auto-analysis on it.
+        """Disassemble from start_address to end_address, then rerun auto-analysis.
 
-        Call after patching bytes, changing types, or creating new code
-        to force Ghidra to re-analyze the affected range.
-
-        Args:
-            start_address: Start of the range.
-            end_address: End of the range (exclusive).
+        Call after patching bytes or creating code so Ghidra picks up the change. The
+        disassembly is limited to the range, but the auto-analysis pass that follows
+        covers the whole program, as wait_for_analysis does. Returns start, end and
+        status "analysis_complete".
         """
         from ghidra.app.cmd.disassemble import DisassembleCommand  # noqa: PLC0415
         from ghidra.util.task import TaskMonitor  # noqa: PLC0415

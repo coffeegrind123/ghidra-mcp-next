@@ -135,12 +135,12 @@ def register(mcp: FastMCP) -> None:
     def decode_instruction(
         address: Address,
     ) -> DecodeInstructionResult:
-        """Decode ONE instruction at an address (mnemonic, operands, size).
+        """Decode the single instruction at an address, with per-operand detail.
 
-        Operand indices from the result can be used with get_operand_value.
-
-        Args:
-            address: Address of the instruction.
+        Use decode_instructions for a run of instructions. Fails with NotFound when no
+        instruction starts there. Returns address, mnemonic, disasm, size,
+        operand_count and operands (index, representation, type, value); pass an
+        operand index to get_operand_value or set_operand_format.
         """
         program = session.program
         addr = resolve_address(address)
@@ -163,17 +163,21 @@ def register(mcp: FastMCP) -> None:
     def decode_instructions(
         address: Address,
         count: Annotated[
-            int, Field(description="Number of instructions to decode.", ge=1, le=200)
+            int,
+            Field(
+                description="Maximum number of instructions to decode (1-200). Example: 50",
+                ge=1,
+                le=200,
+            ),
         ] = 20,
     ) -> DecodeInstructionsResult:
-        """Decode N sequential instructions from any address (not bounded by function limits).
+        """Decode up to count consecutive instructions from an address, ignoring function bounds.
 
-        Use for shellcode, inline data, or ranges across function boundaries.
-        For a complete function listing, prefer disassemble_function.
-
-        Args:
-            address: Starting address.
-            count: Number of instructions to decode (max 200).
+        For ranges that cross function boundaries or are not in any function; use
+        disassemble_function for one whole function, decode_instruction for operand
+        detail. Stops early at the first address with no instruction (run
+        disassemble_at first on raw bytes). Returns start, instruction_count and
+        instructions (address, mnemonic, disasm, size).
         """
         program = session.program
         listing = program.getListing()
@@ -205,16 +209,17 @@ def register(mcp: FastMCP) -> None:
     @session.require_open
     def get_operand_value(
         address: Address,
-        operand_index: int = 0,
+        operand_index: Annotated[
+            int,
+            Field(description="0-based operand index of the instruction. Example: 1"),
+        ] = 0,
     ) -> GetOperandValueResult:
-        """Get the resolved value of an instruction operand.
+        """Get the numeric value of one instruction operand (immediate or referenced address).
 
-        Uses Ghidra's analysis to resolve operand values including
-        computed addresses, register-relative offsets, etc.
-
-        Args:
-            address: Address of the instruction.
-            operand_index: Which operand (0-based).
+        Use decode_instruction to see all operands at once. Fails with InvalidArgument
+        when the index is out of range. Returns address, operand_index, representation
+        and value (hex string, or null for operands with no scalar or address, such as
+        a bare register).
         """
         program = session.program
         addr = resolve_address(address)

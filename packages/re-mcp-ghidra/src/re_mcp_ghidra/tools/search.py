@@ -6,6 +6,8 @@
 
 from __future__ import annotations
 
+from typing import Annotated
+
 from fastmcp import FastMCP
 from pydantic import BaseModel, Field
 
@@ -58,9 +60,17 @@ def register(mcp: FastMCP) -> None:
         offset: Offset = 0,
         limit: Limit = 100,
         filter_pattern: FilterPattern = "",
-        min_length: int = 4,
+        min_length: Annotated[
+            int,
+            Field(description="Skip strings shorter than this many characters. Example: 8"),
+        ] = 4,
     ) -> dict:
-        """Get defined strings from the database with optional regex filter."""
+        """List defined string data items, optionally filtered by a case-insensitive regex.
+
+        Only strings Ghidra has already defined are listed. To find the code that uses
+        a string, use find_code_by_string; for raw bytes use search_bytes. Returns a
+        page: items (address, value, length, type), total, offset, limit, has_more.
+        """
         program = session.program
         filt = compile_filter(filter_pattern)
 
@@ -93,13 +103,22 @@ def register(mcp: FastMCP) -> None:
     @mcp.tool(annotations=ANNO_READ_ONLY, tags={"search", "strings"})
     @session.require_open
     def find_code_by_string(
-        pattern: str,
+        pattern: Annotated[
+            str,
+            Field(
+                description="Case-insensitive regex matched against defined string "
+                "values; required. Example: 'https?://'"
+            ),
+        ],
         offset: Offset = 0,
         limit: Limit = 50,
     ) -> dict:
-        """Find code references to strings matching a regex pattern.
+        """Find every reference to defined strings whose value matches a regex.
 
-        Combines string search + xref resolution + function lookup.
+        Use it to go from a string to the code using it; list_strings only lists the
+        strings. One item per reference. Returns a page: items (string_address,
+        string_value, code_address, function_name, function_address; function fields
+        empty outside a function), total, offset, limit, has_more.
         """
         program = session.program
         filt = compile_filter(pattern)
@@ -149,9 +168,12 @@ def register(mcp: FastMCP) -> None:
         start_address: Address = "",
         limit: Limit = 20,
     ) -> list[SearchBytesMatch]:
-        """Search for a byte pattern in the database.
+        """Find occurrences of an exact byte sequence in program memory.
 
-        Pattern is a hex string, e.g. "48 8B" or "488B". Wildcards not supported.
+        No wildcards. Searches forward from start_address (empty = lowest address);
+        use search_text for disassembly text, list_strings for defined strings.
+        Returns up to limit matches, each with address and function (containing
+        function name, empty if none).
         """
         program = session.program
         mem = program.getMemory()
@@ -188,11 +210,22 @@ def register(mcp: FastMCP) -> None:
     @mcp.tool(annotations=ANNO_READ_ONLY, tags={"search"})
     @session.require_open
     def search_text(
-        pattern: str,
+        pattern: Annotated[
+            str,
+            Field(
+                description="Case-insensitive regex matched against each instruction's "
+                "rendered text (mnemonic and operands); required. Example: 'CALL.*VirtualAlloc'"
+            ),
+        ],
         offset: Offset = 0,
         limit: Limit = 50,
     ) -> dict:
-        """Search disassembly text (mnemonics + operands) for a regex pattern."""
+        """Search the disassembly text of every instruction for a regex.
+
+        Use search_bytes for byte sequences, find_code_by_string for string usage.
+        Returns a page: items (address, text, function), total, offset, limit,
+        has_more.
+        """
         program = session.program
         listing = program.getListing()
         func_mgr = program.getFunctionManager()

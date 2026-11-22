@@ -6,6 +6,8 @@
 
 from __future__ import annotations
 
+from typing import Annotated
+
 from fastmcp import FastMCP
 from pydantic import BaseModel, Field
 
@@ -51,7 +53,11 @@ def register(mcp: FastMCP) -> None:
     @mcp.tool(annotations=ANNO_READ_ONLY, tags={"analysis"})
     @session.require_open
     def get_processor_info() -> ProcessorInfoResult:
-        """Get processor/architecture info (language, bitness, endianness, registers)."""
+        """Describe the program's processor: language ID, pointer size, endianness, registers.
+
+        Returns processor (Ghidra language ID, e.g. x86:LE:64:default), bitness (default
+        pointer size in bits), is_64bit, endian ("big" or "little") and register_names.
+        """
         program = session.program
         language = program.getLanguage()
         addr_size = program.getDefaultPointerSize() * 8
@@ -69,12 +75,26 @@ def register(mcp: FastMCP) -> None:
 
     @mcp.tool(annotations=ANNO_READ_ONLY, tags={"analysis"})
     @session.require_open
-    def get_register_name(register_number: int, width: int = 0) -> GetRegisterNameResult:
-        """Get the name of a register by its number and width.
+    def get_register_name(
+        register_number: Annotated[
+            int,
+            Field(
+                description="Register's offset in Ghidra's register space (processor "
+                "specific). Example: 0"
+            ),
+        ],
+        width: Annotated[
+            int,
+            Field(
+                description="Register size in bytes; 0 means the default pointer size. Example: 4"
+            ),
+        ] = 0,
+    ) -> GetRegisterNameResult:
+        """Map a register-space offset and size to the register's name.
 
-        Args:
-            register_number: The register number (processor-specific).
-            width: Register width in bytes (0 for default pointer size).
+        Prefers a register of exactly that width, then any register at that offset.
+        Returns register_number, width (resolved) and name (empty string when nothing
+        matches). Use get_processor_info for the full register list.
         """
         program = session.program
         language = program.getLanguage()
@@ -107,10 +127,10 @@ def register(mcp: FastMCP) -> None:
     def is_call_instruction(
         address: Address,
     ) -> InstructionCheckResult:
-        """Check whether the instruction at an address is a call.
+        """Test whether the instruction at an address is a call (its flow type is a call).
 
-        Args:
-            address: Address of the instruction.
+        Use is_return_instruction to test for a return instead. Fails with NotFound when
+        no instruction starts there. Returns address and is_call (is_return stays null).
         """
         program = session.program
         listing = program.getListing()
@@ -134,10 +154,11 @@ def register(mcp: FastMCP) -> None:
     def is_return_instruction(
         address: Address,
     ) -> InstructionCheckResult:
-        """Check whether the instruction at an address is a return.
+        """Test whether the instruction at an address ends the function (terminal flow).
 
-        Args:
-            address: Address of the instruction.
+        True for returns and other terminal flow types; use is_call_instruction to test
+        for a call instead. Fails with NotFound when no instruction starts there. Returns
+        address and is_return (is_call stays null).
         """
         program = session.program
         listing = program.getListing()

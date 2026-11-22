@@ -6,6 +6,8 @@
 
 from __future__ import annotations
 
+from typing import Annotated
+
 from fastmcp import FastMCP
 from pydantic import BaseModel, Field
 
@@ -29,15 +31,19 @@ class RebaseProgramResult(BaseModel):
 def register(mcp: FastMCP) -> None:
     @mcp.tool(annotations=ANNO_DESTRUCTIVE, tags={"segments"})
     @session.require_open
-    def set_image_base(delta: str) -> RebaseProgramResult:
-        """Shift all addresses by a signed delta (destructive, global).
+    def set_image_base(
+        delta: Annotated[
+            str,
+            Field(
+                description="Signed amount added to the current image base, as hex or "
+                "decimal; a leading '-' shifts down. Example: '-0x1000'"
+            ),
+        ],
+    ) -> RebaseProgramResult:
+        """Rebase the whole program by moving its image base by a signed delta.
 
-        Computes a new image base by adding the delta to the current base
-        and calls ``program.setImageBase()``.
-
-        Args:
-            delta: Address delta to shift by (e.g. "0x1000" to shift forward,
-                "-0x1000" to shift back).
+        Destructive and global: every address in the program moves. Use it to match a
+        runtime load address. Returns old_base, new_base and delta (all hex).
         """
         try:
             delta_val = -parse_address(delta[1:]) if delta.startswith("-") else parse_address(delta)

@@ -6,6 +6,8 @@
 
 from __future__ import annotations
 
+from typing import Annotated
+
 from fastmcp import FastMCP
 from pydantic import BaseModel, Field
 
@@ -200,15 +202,20 @@ def register(mcp: FastMCP) -> None:
     @session.require_open
     def set_function_calling_convention(
         address: Address,
-        convention: str,
+        convention: Annotated[
+            str,
+            Field(
+                description="Calling convention name known to the program's compiler spec "
+                "(names vary by processor; x86 has __cdecl, __stdcall, __fastcall, "
+                "__thiscall). Example: '__stdcall'"
+            ),
+        ],
     ) -> SetCallingConventionResult:
-        """Change the calling convention of a function.
+        """Change only the calling convention of the function containing an address.
 
-        Args:
-            address: Address or name of the function.
-            convention: Calling convention name (e.g. "__cdecl", "__stdcall",
-                "__fastcall", "__thiscall"). Use get_function_prototype to see
-                the current convention.
+        Use get_function_prototype to see the current one, set_function_prototype to
+        change the whole signature. Fails with SetConventionFailed for an unknown name.
+        Returns address (entry), name, old_convention, convention and status "updated".
         """
         func = resolve_function(address)
         program = session.program

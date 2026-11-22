@@ -6,6 +6,8 @@
 
 from __future__ import annotations
 
+from typing import Annotated
+
 from fastmcp import FastMCP
 from pydantic import BaseModel, Field
 
@@ -38,20 +40,21 @@ class ListDataTypeArchivesResult(BaseModel):
 def register(mcp: FastMCP) -> None:
     @mcp.tool(annotations=ANNO_MUTATE, tags={"signatures"})
     @session.require_open
-    def apply_function_id(fid_name: str = "") -> ApplyFunctionIdResult:
-        """Apply Function ID (FID) analysis to identify known library functions.
+    def apply_function_id(
+        fid_name: Annotated[
+            str,
+            Field(
+                description="FID database label echoed back in the result. It does not "
+                "select a database: every FID database installed for the program's "
+                "language is used. Example: 'vs2019_x64'"
+            ),
+        ] = "",
+    ) -> ApplyFunctionIdResult:
+        """Match functions against Ghidra Function ID (FID) databases to name library code.
 
-        Ghidra's Function ID is the equivalent of IDA's FLIRT signatures.
-        This runs the FID analyzer to match known function signatures
-        against the program's functions.
-
-        Note: Full FID analysis requires the FID databases to be
-        pre-configured in Ghidra's installation. The headless/pyghidra
-        API has limited FID support.
-
-        Args:
-            fid_name: Optional FID database name to apply (empty for all
-                available databases).
+        Ghidra's counterpart of IDA FLIRT signatures. Fails with NotAvailable when the
+        FID plugin or a FID database for the program's language is missing. Returns
+        status "applied" and fid_name; it does not report how many functions matched.
         """
         try:
             from ghidra.feature.fid.service import FidService  # noqa: PLC0415

@@ -6,6 +6,8 @@
 
 from __future__ import annotations
 
+from typing import Annotated
+
 from fastmcp import FastMCP
 from pydantic import BaseModel, Field
 
@@ -64,11 +66,12 @@ def register(mcp: FastMCP) -> None:
         address: Address,
         hex_bytes: HexBytes,
     ) -> PatchBytesResult:
-        """Overwrite raw bytes in memory with a hex string (destructive).
+        """Overwrite raw bytes at an address with literal hex bytes (destructive).
 
-        Args:
-            address: Address to patch.
-            hex_bytes: Hex string of bytes to write (e.g. "90 90 90" or "909090").
+        Existing code units over the range are cleared first. Use patch_instruction to
+        assemble and write an instruction from text instead of raw bytes. Accepts up to
+        1 MB. Returns address, size, old_bytes and new_bytes (hex; old_bytes is empty
+        when the previous bytes were unreadable).
         """
         program = session.program
         memory = program.getMemory()
@@ -112,10 +115,11 @@ def register(mcp: FastMCP) -> None:
     def create_function(
         address: Address,
     ) -> CreateFunctionResult:
-        """Define a new function at an address (Ghidra auto-detects bounds).
+        """Define a function whose entry is the given address; Ghidra derives its body.
 
-        Args:
-            address: Start address for the new function.
+        Use disassemble_at to mark bytes as code without creating a function. Fails with
+        CreateFailed when Ghidra cannot create one there. Returns the entry address,
+        name, end (exclusive) and size in bytes.
         """
         from ghidra.app.cmd.function import CreateFunctionCmd  # noqa: PLC0415
 
@@ -161,14 +165,11 @@ def register(mcp: FastMCP) -> None:
     def disassemble_at(
         address: Address,
     ) -> MakeCodeResult:
-        """Force bytes to be disassembled as code (single instruction, no function).
+        """Disassemble the single instruction at an address, without creating a function.
 
-        Unlike create_function, this just marks the bytes as code without
-        creating a function boundary. Useful for fixing misidentified data
-        or extending analysis into unreached code.
-
-        Args:
-            address: Address to convert to code.
+        Use it to turn misidentified data into code or to reach unanalysed code; use
+        create_function when you also want a function boundary. Returns address, size
+        (length of the instruction now at the address, 0 if none) and status "ok".
         """
         from ghidra.app.cmd.disassemble import DisassembleCommand  # noqa: PLC0415
         from ghidra.program.model.address import AddressSet  # noqa: PLC0415
@@ -210,13 +211,15 @@ def register(mcp: FastMCP) -> None:
     @session.require_open
     def clear_code_units(
         address: Address,
-        size: int = 1,
+        size: Annotated[
+            int,
+            Field(description="Number of bytes from address to undefine. Example: 16"),
+        ] = 1,
     ) -> UndefineResult:
-        """Revert code/data definitions back to raw undefined bytes (byte values unchanged).
+        """Undefine code and data over a byte range, leaving the byte values unchanged.
 
-        Args:
-            address: Address to undefine.
-            size: Number of bytes to undefine.
+        Use before re-typing or re-disassembling a region; patch_bytes changes the
+        bytes themselves. Returns address, size and status "ok".
         """
         program = session.program
         listing = program.getListing()

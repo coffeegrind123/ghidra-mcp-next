@@ -78,12 +78,13 @@ def register(mcp: FastMCP) -> None:
     def get_stack_frame(
         address: Address,
     ) -> GetStackFrameResult:
-        """Get the stack frame layout of a function (offsets, sizes, types).
+        """Show the listing stack-frame layout of the function containing an address.
 
-        For typed variable info from decompilation, use get_function_vars.
-
-        Args:
-            address: Address or name of the function.
+        Reads stack variables without decompiling; use get_function_vars for the
+        decompiler's typed locals and parameters (including register-held ones).
+        Returns function (entry address), name and frame (null when none) with
+        frame_size, local_size, parameter_size, parameter_offset, return_address_offset
+        and members sorted by offset (offset, name, size, type, comment).
         """
         func = resolve_function(address)
         stack_frame = func.getStackFrame()
@@ -132,12 +133,12 @@ def register(mcp: FastMCP) -> None:
     def get_function_vars(
         address: Address,
     ) -> GetFunctionVarsResult:
-        """Get typed locals and parameters via decompilation.
+        """Decompile the function containing an address and list its typed locals and params.
 
-        For the raw stack frame layout, use get_stack_frame.
-
-        Args:
-            address: Address or name of the function.
+        Slower than get_stack_frame, which reads only the listing's stack layout. Fails
+        with DecompilationFailed when decompilation does not complete. Returns function
+        (entry address), name, variable_count and variables (name, type, is_param, size,
+        storage).
         """
         from ghidra.app.decompiler import DecompInterface  # noqa: PLC0415
         from ghidra.util.task import TaskMonitor  # noqa: PLC0415

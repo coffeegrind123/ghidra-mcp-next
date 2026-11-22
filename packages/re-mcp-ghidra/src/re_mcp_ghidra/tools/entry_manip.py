@@ -6,6 +6,8 @@
 
 from __future__ import annotations
 
+from typing import Annotated
+
 from fastmcp import FastMCP
 from pydantic import BaseModel, Field
 
@@ -45,16 +47,16 @@ def register(mcp: FastMCP) -> None:
     @session.require_open
     def add_entry_point(
         address: Address,
-        name: str,
+        name: Annotated[
+            str,
+            Field(description="Name for the entry point's primary symbol. Example: 'DllMain'"),
+        ],
     ) -> AddEntryPointResult:
-        """Register a new entry point at an address.
+        """Mark an address as an external entry point and name its primary symbol.
 
-        Adds the address as an external entry point and creates a label
-        with the given name.
-
-        Args:
-            address: Address of the entry point.
-            name: Name for the entry point.
+        Renames the existing primary symbol there, or creates a label if none exists.
+        Use rename_entry_point to rename an existing entry point. Returns address, name
+        and status "added".
         """
         from ghidra.program.model.symbol import SourceType  # noqa: PLC0415
 
@@ -91,13 +93,16 @@ def register(mcp: FastMCP) -> None:
     @session.require_open
     def rename_entry_point(
         address: Address,
-        name: str,
+        name: Annotated[
+            str,
+            Field(description="New name for the entry point's symbol. Example: 'real_main'"),
+        ],
     ) -> RenameEntryPointResult:
-        """Rename an entry point's symbol at an address.
+        """Rename the primary symbol of an address that is already an entry point.
 
-        Args:
-            address: Address of the entry point.
-            name: New name for the entry point.
+        Fails with NotFound when the address is not an external entry point; use
+        add_entry_point to create one. Returns address, old_name (the address when it
+        had no symbol), new_name and status "renamed".
         """
         from ghidra.program.model.symbol import SourceType  # noqa: PLC0415
 

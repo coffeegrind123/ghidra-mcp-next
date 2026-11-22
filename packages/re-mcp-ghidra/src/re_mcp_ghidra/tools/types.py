@@ -6,6 +6,8 @@
 
 from __future__ import annotations
 
+from typing import Annotated
+
 from fastmcp import FastMCP
 from pydantic import BaseModel, Field
 
@@ -62,7 +64,12 @@ def register(mcp: FastMCP) -> None:
     @mcp.tool(annotations=ANNO_READ_ONLY, tags={"types"})
     @session.require_open
     def get_type_info(address: Address) -> TypeInfoResult:
-        """Get type information at an address."""
+        """Report what type is applied at an address: a function's prototype or a data item's type.
+
+        Read-only; use get_structure for a struct's member layout. Returns address plus,
+        for a function entry, type_name (return type) and function_signature; for
+        defined data, type_name and type_size; otherwise only address.
+        """
         program = session.program
         listing = program.getListing()
         func_mgr = program.getFunctionManager()
@@ -93,12 +100,22 @@ def register(mcp: FastMCP) -> None:
 
     @mcp.tool(annotations=ANNO_MUTATE, tags={"types"})
     @session.require_open
-    def set_type(address: Address, type_string: str) -> SetTypeResult:
-        """Apply a data type at an address.
+    def set_type(
+        address: Address,
+        type_string: Annotated[
+            str,
+            Field(
+                description="Type spelled as a built-in C name (int, unsigned short, "
+                "char, ...) or the name of an existing type, matched case-insensitively, "
+                "with optional trailing '*' for pointers. Example: 'char *'"
+            ),
+        ],
+    ) -> SetTypeResult:
+        """Define data of a C-style type at an address, clearing code units it overlaps.
 
-        Args:
-            address: Target address.
-            type_string: C type string (e.g. "int", "char *", "struct foo").
+        Accepts built-in names and pointer suffixes; use apply_type_at_address to apply an
+        existing type by its exact (case-sensitive) name. Returns address, type_name and
+        status "ok".
         """
         from re_mcp_ghidra.tools.structs import _parse_data_type  # noqa: PLC0415
 
@@ -173,12 +190,21 @@ def register(mcp: FastMCP) -> None:
 
     @mcp.tool(annotations=ANNO_MUTATE, tags={"types"})
     @session.require_open
-    def parse_type_declaration(declaration: str) -> ParseTypeResult:
-        """Parse a C type declaration and add it to the program's type library.
+    def parse_type_declaration(
+        declaration: Annotated[
+            str,
+            Field(
+                description="One C type declaration (struct, union, enum or typedef). "
+                "Example: 'struct point { int x; int y; };'"
+            ),
+        ],
+    ) -> ParseTypeResult:
+        """Parse one C type declaration and add the resulting type to the program.
 
-        Args:
-            declaration: C declaration (e.g. "typedef int DWORD;" or
-                         "struct point { int x; int y; };").
+        Defines a complete struct, enum or typedef in one call; use create_structure or
+        create_enum to start an empty type. parse_c_source runs the same parser and also
+        reports typedef as a kind. Returns type_name, size, kind (struct, union, enum or
+        other) and status "parsed".
         """
         from ghidra.app.util.cparser.C import CParser  # noqa: PLC0415
 
@@ -224,12 +250,19 @@ def register(mcp: FastMCP) -> None:
     @session.require_open
     def apply_type_at_address(
         address: Address,
-        type_name: str,
+        type_name: Annotated[
+            str,
+            Field(
+                description="Exact, case-sensitive name of a type already in the program's "
+                "data type manager. Example: 'IMAGE_NT_HEADERS32'"
+            ),
+        ],
     ) -> ApplyTypeResult:
-        """Apply a named type from the type library at an address.
+        """Define data of an existing named type at an address, clearing code units it overlaps.
 
-        The type must already exist (defined via parse_type_declaration
-        or present in the program's built-in types).
+        The type must already exist (e.g. from parse_type_declaration); use set_type for
+        C spellings such as 'char *'. Fails with NotFound for an unknown name. Returns
+        address, type_name and status "applied".
         """
         program = session.program
         listing = program.getListing()

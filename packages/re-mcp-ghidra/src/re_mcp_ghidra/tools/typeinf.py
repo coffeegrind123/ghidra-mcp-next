@@ -6,6 +6,8 @@
 
 from __future__ import annotations
 
+from typing import Annotated
+
 from fastmcp import FastMCP
 from pydantic import BaseModel, Field
 
@@ -137,14 +139,20 @@ def register(mcp: FastMCP) -> None:
 
     @mcp.tool(annotations=ANNO_DESTRUCTIVE, tags={"types"})
     @session.require_open
-    def delete_data_type(name: str) -> DeleteLocalTypeResult:
-        """Remove a data type from the program's data type manager.
+    def delete_data_type(
+        name: Annotated[
+            str,
+            Field(
+                description="Exact, case-sensitive name of the type (any kind: typedef, enum, "
+                "struct, function definition, ...). Example: 'DWORD_PTR'"
+            ),
+        ],
+    ) -> DeleteLocalTypeResult:
+        """Delete any data type by exact name from the program's data type manager.
 
-        Irreversible -- the type declaration is removed. Use undo to
-        revert if needed.
-
-        Args:
-            name: Name of the data type to delete.
+        Works for every kind of type; delete_structure and delete_enum are the
+        struct-only and enum-only variants. Revert with undo. Fails with NotFound for an
+        unknown name. Returns name, category and status "deleted".
         """
         program = session.program
         dtm = program.getDataTypeManager()

@@ -6,6 +6,8 @@
 
 from __future__ import annotations
 
+from typing import Annotated
+
 from fastmcp import FastMCP
 from pydantic import BaseModel, Field
 
@@ -53,21 +55,41 @@ def register(mcp: FastMCP) -> None:
     @session.require_open
     def set_function_flags(
         address: Address,
-        library: bool | None = None,
-        thunk: bool | None = None,
-        noreturn: bool | None = None,
-        inline: bool | None = None,
+        library: Annotated[
+            bool | None,
+            Field(
+                description="True adds the LIBRARY function tag, False removes it; null "
+                "leaves it. A tag only, no analysis effect. Example: true"
+            ),
+        ] = None,
+        thunk: Annotated[
+            bool | None,
+            Field(
+                description="True is accepted only if the function is already a thunk "
+                "(otherwise InvalidArgument); False is a no-op since thunks cannot be "
+                "unset here; null leaves it. Example: null"
+            ),
+        ] = None,
+        noreturn: Annotated[
+            bool | None,
+            Field(
+                description="True marks the function non-returning, False clears it; null "
+                "leaves it. Example: true"
+            ),
+        ] = None,
+        inline: Annotated[
+            bool | None,
+            Field(
+                description="True marks the function inline, False clears it; null leaves "
+                "it. Example: false"
+            ),
+        ] = None,
     ) -> SetFunctionFlagsResult:
-        """Set or clear function flags (library, thunk, noreturn, inline).
+        """Set or clear noreturn, inline and library flags on the function containing an address.
 
-        Only provided flags are changed; others are left as-is.
-
-        Args:
-            address: Address or name of the function.
-            library: Mark/unmark as library function (tag only, no behavior change).
-            thunk: Mark/unmark as thunk (wrapper) function.
-            noreturn: Mark/unmark as non-returning.
-            inline: Mark/unmark as inline.
+        Only flags passed as true/false change. Returns address (entry), name, changed
+        (the flags requested, flag -> value) and status "updated", or "no_change" when
+        no flag was given.
         """
         func = resolve_function(address)
         program = session.program
@@ -153,10 +175,11 @@ def register(mcp: FastMCP) -> None:
     def get_code_unit(
         address: Address,
     ) -> ByteFlagsResult:
-        """Get what is at an address: instruction, data, or undefined.
+        """Classify what occupies an address: instruction, defined data or undefined bytes.
 
-        Args:
-            address: Address to query.
+        A quick listing probe; use decode_instruction for operand details or
+        get_type_info for the applied type. Returns address, item_type, item_size,
+        is_instruction, is_data, is_undefined, has_function, has_label and has_comment.
         """
         program = session.program
         addr = resolve_address(address)

@@ -6,8 +6,10 @@
 
 from __future__ import annotations
 
+from typing import Annotated
+
 from fastmcp import FastMCP
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from re_mcp_ghidra.exceptions import GhidraError
 from re_mcp_ghidra.helpers import (
@@ -157,8 +159,19 @@ def register(mcp: FastMCP) -> None:
 
     @mcp.tool(annotations=ANNO_READ_ONLY, tags={"structs"})
     @session.require_open
-    def get_structure(name: str) -> StructDetailResult:
-        """Get detailed structure info including all members."""
+    def get_structure(
+        name: Annotated[
+            str,
+            Field(description="Exact name of a structure or union. Example: 'IMAGE_DOS_HEADER'"),
+        ],
+    ) -> StructDetailResult:
+        """Show the full member layout of one structure or union.
+
+        Use list_structures to find names; get_type_info instead reports which type is
+        applied at an address.
+        Fails with NotFound if no struct/union has that name. Returns name, size,
+        is_union, category and members (each with offset, name, type, size, comment).
+        """
         dt = _resolve_struct(name)
         from ghidra.program.model.data import Union  # noqa: PLC0415
 
@@ -187,11 +200,30 @@ def register(mcp: FastMCP) -> None:
     @mcp.tool(annotations=ANNO_MUTATE_NON_IDEMPOTENT, tags={"structs"})
     @session.require_open
     def create_structure(
-        name: str,
-        is_union: bool = False,
-        size: int = 0,
+        name: Annotated[
+            str,
+            Field(
+                description="Name for the new type, created in the root category. "
+                "Example: 'config_t'"
+            ),
+        ],
+        is_union: Annotated[
+            bool,
+            Field(description="True creates a union instead of a structure. Example: false"),
+        ] = False,
+        size: Annotated[
+            int,
+            Field(
+                description="Initial structure size in bytes, filled with undefined bytes; 0 "
+                "starts empty. Ignored for unions. Example: 64"
+            ),
+        ] = 0,
     ) -> CreateStructResult:
-        """Create a new structure or union."""
+        """Create an empty structure or union in the root category of the type manager.
+
+        Add members afterwards with add_struct_member; to define a full type from C
+        source use parse_type_declaration. Returns name, is_union and status "created".
+        """
         from ghidra.program.model.data import (  # noqa: PLC0415
             CategoryPath,
             StructureDataType,
@@ -222,20 +254,40 @@ def register(mcp: FastMCP) -> None:
     @mcp.tool(annotations=ANNO_MUTATE_NON_IDEMPOTENT, tags={"structs"})
     @session.require_open
     def add_struct_member(
-        struct_name: str,
-        member_name: str,
-        member_type: str = "byte",
-        offset: int = -1,
-        size: int = 0,
+        struct_name: Annotated[
+            str,
+            Field(
+                description="Exact name of an existing structure or union. "
+                "Example: 'IMAGE_DOS_HEADER'"
+            ),
+        ],
+        member_name: Annotated[
+            str, Field(description="Field name for the new member. Example: 'e_lfanew'")
+        ],
+        member_type: Annotated[
+            str,
+            Field(
+                description="Member type: a built-in C name (int, unsigned short, char, ...), "
+                "an existing type name, with optional trailing '*' for pointers. "
+                "Example: 'char *'"
+            ),
+        ] = "byte",
+        offset: Annotated[
+            int,
+            Field(
+                description="Byte offset to place the member at, replacing what is there; "
+                "-1 appends at the end. Example: 60"
+            ),
+        ] = -1,
+        size: Annotated[
+            int,
+            Field(description="Member size in bytes; 0 uses the type's own size. Example: 4"),
+        ] = 0,
     ) -> AddStructMemberResult:
-        """Add a member to a structure.
+        """Append a member to a struct/union, or place it at a byte offset over existing bytes.
 
-        Args:
-            struct_name: Name of the structure.
-            member_name: Name for the new member.
-            member_type: C type of the member (e.g. "int", "char *").
-            offset: Byte offset (-1 to append at end).
-            size: Size in bytes (0 to auto-detect from type).
+        Use retype_struct_member or rename_struct_member to change an existing member.
+        Returns struct_name, member_name, the actual offset, type and status "added".
         """
 
         dt = _resolve_struct(struct_name)
@@ -269,11 +321,33 @@ def register(mcp: FastMCP) -> None:
     @mcp.tool(annotations=ANNO_MUTATE, tags={"structs"})
     @session.require_open
     def retype_struct_member(
-        struct_name: str,
-        member_name: str,
-        new_type: str,
+        struct_name: Annotated[
+            str,
+            Field(
+                description="Exact name of an existing structure or union. "
+                "Example: 'IMAGE_DOS_HEADER'"
+            ),
+        ],
+        member_name: Annotated[
+            str,
+            Field(
+                description="Current member name; unnamed members are 'field_<index>'. "
+                "Example: 'field_3'"
+            ),
+        ],
+        new_type: Annotated[
+            str,
+            Field(
+                description="New type: built-in C name or existing type name, optional "
+                "trailing '*'. Example: 'unsigned int'"
+            ),
+        ],
     ) -> RetypeStructMemberResult:
-        """Change the type of a structure member."""
+        """Change the data type of one existing struct/union member, keeping its name.
+
+        Use add_struct_member to add a member, rename_struct_member to rename one.
+        Returns struct_name, member_name, old_type, new_type and status "retyped".
+        """
         dt = _resolve_struct(struct_name)
         program = session.program
 
@@ -300,16 +374,26 @@ def register(mcp: FastMCP) -> None:
     @mcp.tool(annotations=ANNO_MUTATE, tags={"structs"})
     @session.require_open
     def rename_struct_member(
-        struct_name: str,
-        old_name: str,
-        new_name: str,
+        struct_name: Annotated[
+            str,
+            Field(
+                description="Exact name of an existing structure or union. "
+                "Example: 'IMAGE_DOS_HEADER'"
+            ),
+        ],
+        old_name: Annotated[
+            str,
+            Field(
+                description="Current member name; unnamed members are 'field_<index>'. "
+                "Example: 'field_2'"
+            ),
+        ],
+        new_name: Annotated[str, Field(description="New member name. Example: 'buffer_len'")],
     ) -> RenameStructMemberResult:
-        """Rename a member of a structure.
+        """Rename one member of a structure or union, keeping its type and offset.
 
-        Args:
-            struct_name: Name of the structure.
-            old_name: Current member name.
-            new_name: New member name.
+        Use retype_struct_member to change its type instead. Returns struct_name,
+        old_name and new_name.
         """
         dt = _resolve_struct(struct_name)
         program = session.program
@@ -333,14 +417,26 @@ def register(mcp: FastMCP) -> None:
     @mcp.tool(annotations=ANNO_DESTRUCTIVE, tags={"structs"})
     @session.require_open
     def delete_struct_member(
-        struct_name: str,
-        member_name: str,
+        struct_name: Annotated[
+            str,
+            Field(
+                description="Exact name of an existing structure or union. "
+                "Example: 'IMAGE_DOS_HEADER'"
+            ),
+        ],
+        member_name: Annotated[
+            str,
+            Field(
+                description="Member to remove; unnamed members are 'field_<index>'. "
+                "Example: 'reserved'"
+            ),
+        ],
     ) -> DeleteStructMemberResult:
-        """Delete a member from a structure.
+        """Remove one member from a struct or union; the type itself stays.
 
-        Args:
-            struct_name: Name of the structure.
-            member_name: Name of the member to delete.
+        In a structure the member's bytes become undefined (size and later offsets are
+        kept); in a union the member is deleted. Use delete_structure to remove the whole
+        type. Returns struct_name, member_name and old_size (the member's byte size).
         """
         from ghidra.program.model.data import Union  # noqa: PLC0415
 
@@ -369,11 +465,18 @@ def register(mcp: FastMCP) -> None:
 
     @mcp.tool(annotations=ANNO_DESTRUCTIVE, tags={"structs"})
     @session.require_open
-    def delete_structure(name: str) -> DeleteStructureResult:
-        """Delete ONE struct/union by name.
+    def delete_structure(
+        name: Annotated[
+            str,
+            Field(
+                description="Exact name of the structure or union to delete. Example: 'config_t'"
+            ),
+        ],
+    ) -> DeleteStructureResult:
+        """Delete one structure or union type by name from the data type manager.
 
-        Args:
-            name: Name of the structure to delete.
+        Only matches structs/unions; use delete_data_type for enums, typedefs and other
+        types. Returns name, old_size and old_member_count.
         """
         dt = _resolve_struct(name)
         program = session.program

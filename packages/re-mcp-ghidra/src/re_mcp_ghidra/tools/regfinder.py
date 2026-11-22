@@ -11,6 +11,8 @@ preceding instructions for scalar loads into the requested register.
 
 from __future__ import annotations
 
+from typing import Annotated
+
 from fastmcp import FastMCP
 from pydantic import BaseModel, Field
 
@@ -42,17 +44,21 @@ def register(mcp: FastMCP) -> None:
     @session.require_open
     def find_register_value(
         address: Address,
-        register_name: str,
+        register_name: Annotated[
+            str,
+            Field(
+                description="Register name as the processor defines it; tried as given, "
+                "then upper- and lower-case. Example: 'ECX'"
+            ),
+        ],
     ) -> FindRegisterValueResult:
-        """Try to determine a register value at an address by examining preceding instructions.
+        """Guess a register's constant value at an instruction from the instructions before it.
 
-        This is a simplified heuristic that walks backwards from the given
-        address looking for scalar loads (MOV, LEA, etc.) into the target
-        register. Does not perform full dataflow or PCode emulation.
-
-        Args:
-            address: Address at which to find the register value.
-            register_name: Register name (e.g. "RAX", "EAX", "R8", "ECX").
+        Heuristic, not dataflow: scans back up to 32 instructions in address order for
+        the nearest one that writes the register and has a scalar operand, and reports
+        that scalar. Use it for quick constant recovery (e.g. a syscall number in EAX).
+        Returns address, register_name, found, and value plus source_address when found
+        or reason when not.
         """
         program = session.program
         listing = program.getListing()

@@ -6,6 +6,8 @@
 
 from __future__ import annotations
 
+from typing import Annotated
+
 from fastmcp import FastMCP
 from pydantic import BaseModel, Field
 
@@ -143,13 +145,26 @@ def register(mcp: FastMCP) -> None:
 
     @mcp.tool(annotations=ANNO_MUTATE_NON_IDEMPOTENT, tags={"types", "enums"})
     @session.require_open
-    def create_enum(name: str, bitfield: bool = False) -> CreateEnumResult:
-        """Create a new enum type.
+    def create_enum(
+        name: Annotated[
+            str,
+            Field(
+                description="Name for the new enum, created in the root category. "
+                "Example: 'FILE_ACCESS'"
+            ),
+        ],
+        bitfield: Annotated[
+            bool,
+            Field(
+                description="Recorded and echoed back only; Ghidra enums have no bitfield "
+                "flag, so it has no effect. Example: false"
+            ),
+        ] = False,
+    ) -> CreateEnumResult:
+        """Create an empty 4-byte enum in the root category; add values with add_enum_member.
 
-        Args:
-            name: Name for the enum.
-            bitfield: If True, create as a bitfield enum (unused in Ghidra but
-                reserved for future use).
+        To define an enum with its values from C source in one step use
+        parse_type_declaration. Returns name, bitfield and status "created".
         """
         from ghidra.program.model.data import CategoryPath, EnumDataType  # noqa: PLC0415
 
@@ -169,11 +184,15 @@ def register(mcp: FastMCP) -> None:
 
     @mcp.tool(annotations=ANNO_DESTRUCTIVE, tags={"types", "enums"})
     @session.require_open
-    def delete_enum(name: str) -> DeleteEnumResult:
-        """Delete an enum by name.
+    def delete_enum(
+        name: Annotated[
+            str, Field(description="Exact name of the enum to delete. Example: 'FILE_ACCESS'")
+        ],
+    ) -> DeleteEnumResult:
+        """Delete a whole enum type from the data type manager.
 
-        Args:
-            name: Name of the enum to delete.
+        Use delete_enum_member to remove a single value instead. Returns name,
+        old_member_count and status "deleted".
         """
         enum_dt = _resolve_enum(name)
         old_member_count = enum_dt.getCount()
@@ -193,13 +212,19 @@ def register(mcp: FastMCP) -> None:
 
     @mcp.tool(annotations=ANNO_MUTATE, tags={"types", "enums"})
     @session.require_open
-    def add_enum_member(enum_name: str, member_name: str, value: int) -> AddEnumMemberResult:
-        """Add a member to an enum.
+    def add_enum_member(
+        enum_name: Annotated[
+            str, Field(description="Exact name of an existing enum. Example: 'FILE_ACCESS'")
+        ],
+        member_name: Annotated[
+            str, Field(description="Name for the new member. Example: 'ACCESS_READ'")
+        ],
+        value: Annotated[int, Field(description="Integer value of the member. Example: 1")],
+    ) -> AddEnumMemberResult:
+        """Add one named value to an existing enum.
 
-        Args:
-            enum_name: Name of the enum.
-            member_name: Name for the new member.
-            value: Integer value for the member.
+        Use rename_enum_member to rename an existing value. Returns enum, member, value
+        and status "added".
         """
         enum_dt = _resolve_enum(enum_name)
 
@@ -241,12 +266,14 @@ def register(mcp: FastMCP) -> None:
 
     @mcp.tool(annotations=ANNO_MUTATE, tags={"types", "enums"})
     @session.require_open
-    def rename_enum(old_name: str, new_name: str) -> RenameEnumResult:
-        """Rename an enum.
+    def rename_enum(
+        old_name: Annotated[str, Field(description="Current name of the enum. Example: 'enum_1'")],
+        new_name: Annotated[str, Field(description="New enum name. Example: 'FILE_ACCESS'")],
+    ) -> RenameEnumResult:
+        """Rename an enum type itself; its members are unchanged.
 
-        Args:
-            old_name: Current name of the enum.
-            new_name: New name for the enum.
+        Use rename_enum_member to rename a value inside it. Returns old_name, new_name
+        and status "renamed".
         """
         enum_dt = _resolve_enum(old_name)
 
@@ -266,12 +293,19 @@ def register(mcp: FastMCP) -> None:
 
     @mcp.tool(annotations=ANNO_DESTRUCTIVE, tags={"types", "enums"})
     @session.require_open
-    def delete_enum_member(enum_name: str, value: int) -> DeleteEnumMemberResult:
-        """Delete a member from an enum by its value.
+    def delete_enum_member(
+        enum_name: Annotated[
+            str, Field(description="Exact name of an existing enum. Example: 'FILE_ACCESS'")
+        ],
+        value: Annotated[
+            int,
+            Field(description="Integer value that identifies the member. Example: 2"),
+        ],
+    ) -> DeleteEnumMemberResult:
+        """Remove the member with a given value from an enum; the enum itself stays.
 
-        Args:
-            enum_name: Name of the enum.
-            value: Integer value of the member to delete.
+        Use delete_enum to remove the whole type. Fails with NotFound when no member has
+        that value. Returns enum, member (the removed name), value and status "deleted".
         """
         enum_dt = _resolve_enum(enum_name)
 
@@ -296,13 +330,22 @@ def register(mcp: FastMCP) -> None:
 
     @mcp.tool(annotations=ANNO_MUTATE, tags={"types", "enums"})
     @session.require_open
-    def rename_enum_member(enum_name: str, value: int, new_name: str) -> RenameEnumMemberResult:
-        """Rename an enum member by its value.
+    def rename_enum_member(
+        enum_name: Annotated[
+            str, Field(description="Exact name of an existing enum. Example: 'FILE_ACCESS'")
+        ],
+        value: Annotated[
+            int,
+            Field(description="Integer value that identifies the member. Example: 2"),
+        ],
+        new_name: Annotated[
+            str, Field(description="New name for that member. Example: 'ACCESS_WRITE'")
+        ],
+    ) -> RenameEnumMemberResult:
+        """Rename the enum member that has a given value, keeping the value.
 
-        Args:
-            enum_name: Name of the enum.
-            value: Integer value of the member to rename.
-            new_name: New name for the member.
+        Use rename_enum to rename the enum type. Fails with NotFound when no member has
+        that value. Returns enum, old_name, new_name, value and status "renamed".
         """
         enum_dt = _resolve_enum(enum_name)
 

@@ -6,6 +6,8 @@
 
 from __future__ import annotations
 
+from typing import Annotated
+
 from fastmcp import FastMCP
 from pydantic import BaseModel, Field
 
@@ -156,15 +158,24 @@ def register(mcp: FastMCP) -> None:
     @session.require_open
     def rename_decompiler_variable(
         function_address: Address,
-        old_name: str,
-        new_name: str,
+        old_name: Annotated[
+            str,
+            Field(
+                description="Current variable name exactly as shown in the decompiler "
+                "output (see list_decompiler_variables). Example: 'local_10'"
+            ),
+        ],
+        new_name: Annotated[
+            str,
+            Field(description="New name to assign to the variable. Example: 'buf_len'"),
+        ],
     ) -> RenameDecompilerVarResult:
-        """Rename a decompiler local variable or parameter.
+        """Rename a local variable or parameter in a function's decompiled output.
 
-        Args:
-            function_address: Address or name of the function.
-            old_name: Current variable name in the decompiler output.
-            new_name: New name to assign to the variable.
+        Changes only the name and keeps the type; use retype_decompiler_variable to
+        change the type instead. Decompiles the function to find the variable and fails
+        with NotFound when old_name is not one of its symbols. Returns function (entry
+        address), old_name and new_name.
         """
         from ghidra.app.decompiler import DecompInterface  # noqa: PLC0415
         from ghidra.program.model.pcode import HighFunctionDBUtil  # noqa: PLC0415
@@ -241,15 +252,27 @@ def register(mcp: FastMCP) -> None:
     @session.require_open
     def retype_decompiler_variable(
         function_address: Address,
-        variable_name: str,
-        new_type: str,
+        variable_name: Annotated[
+            str,
+            Field(
+                description="Variable name exactly as shown in the decompiler output "
+                "(see list_decompiler_variables). Example: 'param_1'"
+            ),
+        ],
+        new_type: Annotated[
+            str,
+            Field(
+                description="C type to apply, resolved against the program's data "
+                "types. Example: 'char *'"
+            ),
+        ],
     ) -> RetypeDecompilerVarResult:
-        """Retype a decompiler local variable or parameter.
+        """Change the data type of a local variable or parameter in decompiled output.
 
-        Args:
-            function_address: Address or name of the function.
-            variable_name: Name of the variable to retype.
-            new_type: C type string to apply (e.g. "int *", "struct foo *").
+        Changes only the type and keeps the name; use rename_decompiler_variable to
+        rename instead. Fails with NotFound when the variable is not one of the
+        function's decompiler symbols. Returns function (entry address), variable,
+        old_type and new_type.
         """
         from ghidra.app.decompiler import DecompInterface  # noqa: PLC0415
         from ghidra.program.model.pcode import HighFunctionDBUtil  # noqa: PLC0415

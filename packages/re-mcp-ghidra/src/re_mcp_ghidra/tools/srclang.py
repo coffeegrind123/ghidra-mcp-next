@@ -6,6 +6,8 @@
 
 from __future__ import annotations
 
+from typing import Annotated, Literal
+
 from fastmcp import FastMCP
 from pydantic import BaseModel, Field
 
@@ -26,23 +28,23 @@ def register(mcp: FastMCP) -> None:
     @mcp.tool(annotations=ANNO_MUTATE, tags={"types"})
     @session.require_open
     def parse_c_source(
-        source: str,
-        language: str = "c",
+        source: Annotated[
+            str,
+            Field(
+                description="C type declaration text. "
+                "Example: 'typedef struct { int x; int y; } point_t;'"
+            ),
+        ],
+        language: Annotated[
+            Literal["c"],
+            Field(description="Source language; Ghidra's CParser supports only C. Example: 'c'"),
+        ] = "c",
     ) -> ParseSourceResult:
-        """Parse C source declarations and import types into the program's type manager.
+        """Parse C type declarations with Ghidra's CParser and add the parsed type to the program.
 
-        Uses Ghidra's CParser to parse C type declarations. Parsed types
-        are added to the program's data type manager and become available
-        for application at addresses.
-
-        Note: Ghidra's built-in parser supports C declarations only.
-        The language parameter is accepted for API compatibility but
-        currently only "c" is supported.
-
-        Args:
-            source: C source code string containing type declarations
-                (e.g. "typedef int DWORD;" or "struct point { int x; int y; };").
-            language: Source language (only "c" is currently supported).
+        Same parser as parse_type_declaration; this variant also reports typedef as a
+        kind. Apply the new type with apply_type_at_address. Returns status "parsed",
+        type_name and kind (struct, union, enum, typedef or other).
         """
         from ghidra.app.util.cparser.C import CParser  # noqa: PLC0415
         from ghidra.program.model.data import (  # noqa: PLC0415

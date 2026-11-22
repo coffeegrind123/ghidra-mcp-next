@@ -6,6 +6,8 @@
 
 from __future__ import annotations
 
+from typing import Annotated, Literal
+
 from fastmcp import FastMCP
 from pydantic import BaseModel, Field
 
@@ -54,7 +56,13 @@ def register(mcp: FastMCP) -> None:
     @mcp.tool(annotations=ANNO_READ_ONLY, tags={"comments"})
     @session.require_open
     def get_comment(address: Address) -> GetCommentResult:
-        """Get all comments at an address."""
+        """Read every listing comment on the code unit at an address.
+
+        Read-only; use set_comment to write one, get_function_comment for a function's
+        header comment. Returns address plus eol_comment, pre_comment, post_comment,
+        plate_comment and repeatable_comment (empty string when unset or when no code
+        unit exists there).
+        """
         from ghidra.program.model.listing import CodeUnit  # noqa: PLC0415
 
         program = session.program
@@ -78,15 +86,27 @@ def register(mcp: FastMCP) -> None:
     @session.require_open
     def set_comment(
         address: Address,
-        comment: str,
-        comment_type: str = "eol",
+        comment: Annotated[
+            str,
+            Field(
+                description="Comment text; an empty string clears that slot. "
+                "Example: 'decrypts config blob'"
+            ),
+        ],
+        comment_type: Annotated[
+            Literal["eol", "pre", "post", "plate", "repeatable"],
+            Field(
+                description="Comment slot: eol (end of line), pre (above the line, also "
+                "shown in decompiler output), post (below), plate (boxed header) or "
+                "repeatable (echoed at referencing sites). Example: 'pre'"
+            ),
+        ] = "eol",
     ) -> SetCommentResult:
-        """Set a comment at an address.
+        """Write or clear one listing comment slot at an address, replacing its text.
 
-        Args:
-            address: Target address.
-            comment: Comment text (empty string to clear).
-            comment_type: One of "eol", "pre", "post", "plate", "repeatable".
+        Use get_comment to read comments, set_function_comment for a function's header
+        comment. Fails with NotFound when no code unit exists at the address. Returns
+        address, comment_type, comment and status "ok".
         """
         from ghidra.program.model.listing import CodeUnit  # noqa: PLC0415
 
@@ -133,12 +153,19 @@ def register(mcp: FastMCP) -> None:
     @session.require_open
     def set_decompiler_comment(
         address: Address,
-        comment: str,
+        comment: Annotated[
+            str,
+            Field(
+                description="Comment text; an empty string clears the pre comment. "
+                "Example: 'walk the import table'"
+            ),
+        ],
     ) -> SetCommentResult:
-        """Set a pre-comment at an address (visible in decompiler output).
+        """Write the PRE comment at an address; it shows above that line in pseudocode.
 
-        This sets a PRE comment, which Ghidra's decompiler renders
-        above the corresponding line in the pseudocode.
+        Shorthand for set_comment with comment_type="pre". Fails with NotFound when no
+        code unit exists there. Returns address, comment_type ("pre"), comment and
+        status "ok".
         """
         from ghidra.program.model.listing import CodeUnit  # noqa: PLC0415
 
@@ -170,7 +197,12 @@ def register(mcp: FastMCP) -> None:
     @mcp.tool(annotations=ANNO_READ_ONLY, tags={"comments", "functions"})
     @session.require_open
     def get_function_comment(address: Address) -> GetFunctionCommentResult:
-        """Get the comment on a function."""
+        """Read the header comments of the function containing an address.
+
+        Read-only; use set_function_comment to write, get_comment for per-instruction
+        comments. Returns the function's entry address, function_name, comment and
+        repeatable_comment (empty string when unset).
+        """
         from re_mcp_ghidra.helpers import resolve_function  # noqa: PLC0415
 
         func = resolve_function(address)
@@ -185,10 +217,27 @@ def register(mcp: FastMCP) -> None:
     @session.require_open
     def set_function_comment(
         address: Address,
-        comment: str,
-        repeatable: bool = True,
+        comment: Annotated[
+            str,
+            Field(
+                description="Comment text; an empty string clears it. "
+                "Example: 'Parses the PE header and returns the entry RVA.'"
+            ),
+        ],
+        repeatable: Annotated[
+            bool,
+            Field(
+                description="True writes the repeatable comment (also shown at call "
+                "sites); False writes the plain function comment. Example: false"
+            ),
+        ] = True,
     ) -> SetFunctionCommentResult:
-        """Set a comment on a function header."""
+        """Write or clear the header comment of the function containing an address.
+
+        Use get_function_comment to read it back, set_comment for comments on single
+        instructions. Returns the function's entry address, function_name, comment
+        and status "ok".
+        """
         from re_mcp_ghidra.helpers import resolve_function  # noqa: PLC0415
 
         func = resolve_function(address)

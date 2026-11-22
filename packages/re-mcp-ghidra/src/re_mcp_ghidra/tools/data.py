@@ -6,8 +6,10 @@
 
 from __future__ import annotations
 
+from typing import Annotated
+
 from fastmcp import FastMCP
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from re_mcp_ghidra.exceptions import GhidraError
 from re_mcp_ghidra.helpers import (
@@ -46,13 +48,19 @@ def register(mcp: FastMCP) -> None:
     @session.require_open
     def read_bytes(
         address: Address,
-        size: int = 256,
+        size: Annotated[
+            int,
+            Field(
+                description="Number of bytes to read, at least 1; values above 4096 are "
+                "capped at 4096. Example: 64"
+            ),
+        ] = 256,
     ) -> ReadBytesResult:
-        """Read raw bytes from the database.
+        """Read raw bytes from program memory starting at an address.
 
-        Args:
-            address: Start address.
-            size: Number of bytes to read (max 4096).
+        Stops early at the first unreadable byte, so size in the result can be smaller
+        than requested. Returns address, size (bytes actually read), hex_data
+        (space-separated uppercase hex) and ascii (non-printables shown as '.').
         """
         if size > 4096:
             size = 4096

@@ -6,6 +6,8 @@
 
 from __future__ import annotations
 
+from typing import Annotated
+
 from fastmcp import FastMCP
 from pydantic import BaseModel, Field
 
@@ -83,15 +85,19 @@ def register(mcp: FastMCP) -> None:
     @session.require_open
     def assemble_instruction(
         address: Address,
-        instruction: str,
+        instruction: Annotated[
+            str,
+            Field(
+                description="One instruction in the program's assembler syntax. "
+                "Example: 'MOV EAX,0x1'"
+            ),
+        ],
     ) -> AssembleResult:
-        """Assemble an instruction at an address without patching (dry-run).
+        """Assemble one instruction for an address without writing it (dry run).
 
-        Use patch_instruction to assemble and write in one step.
-
-        Args:
-            address: Address where the instruction should be assembled.
-            instruction: Assembly instruction text (e.g. "NOP", "MOV EAX,1").
+        Use it to check encoding and length before patching; patch_instruction writes
+        the result, patch_bytes writes raw hex. Returns address, instruction,
+        old_bytes (current bytes over the same length), assembled_bytes and length.
         """
         program = session.program
         addr = resolve_address(address)
@@ -110,15 +116,19 @@ def register(mcp: FastMCP) -> None:
     @session.require_open
     def patch_instruction(
         address: Address,
-        instruction: str,
+        instruction: Annotated[
+            str,
+            Field(
+                description="One instruction in the program's assembler syntax. "
+                "Example: 'MOV EAX,0x1'"
+            ),
+        ],
     ) -> PatchAsmResult:
-        """Assemble and patch an instruction into the database in one step.
+        """Assemble one instruction and overwrite the bytes at an address with it.
 
-        Combines assemble_instruction + byte patching within a transaction.
-
-        Args:
-            address: Address where the instruction should be assembled and patched.
-            instruction: Assembly instruction text (e.g. "NOP", "MOV EAX,1").
+        Destructive; existing code units over the range are cleared and not
+        re-disassembled. Use assemble_instruction for a dry run, patch_bytes for raw
+        hex. Returns address, instruction, old_bytes, new_bytes, length and patched.
         """
         program = session.program
         addr = resolve_address(address)

@@ -51,13 +51,13 @@ def register(mcp: FastMCP) -> None:
     def get_address_info(
         address: Address,
     ) -> AddressInfoResult:
-        """Get classification and metadata for an address.
+        """Classify one address: code, data or undefined, plus its name, xrefs and function.
 
-        Reports whether the address contains code, data, or is undefined,
-        whether it has a name, cross-references, and function membership.
-
-        Args:
-            address: Address to query.
+        A cheap first look before deciding which tool to use next; use get_xrefs_to or
+        get_xrefs_from for the references themselves. Returns address, is_code,
+        is_data, is_undefined, has_name, name, reference_to_count,
+        reference_from_count (and has_references_to/from), is_function_entry,
+        in_function, function_name, is_external, code_unit_size and data_type.
         """
         from ghidra.program.model.listing import Instruction  # noqa: PLC0415
 

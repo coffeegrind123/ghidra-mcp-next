@@ -97,12 +97,11 @@ def register(mcp: FastMCP) -> None:
         start: Address,
         end: Address,
     ) -> AppendFunctionTailResult:
-        """Append a tail (non-contiguous range) to a function body.
+        """Add the range [start, end) to the body of the function containing function_address.
 
-        Args:
-            function_address: Address or name of the owning function.
-            start: Start address of the tail region.
-            end: End address of the tail region (exclusive).
+        Use it to attach a split-off tail (cold block, shared epilogue) to its owner;
+        remove_function_range undoes it, list_function_ranges shows the result. end is
+        exclusive. Returns function (entry address), tail_start and tail_end.
         """
         from ghidra.program.model.address import AddressSet  # noqa: PLC0415
 
@@ -149,14 +148,11 @@ def register(mcp: FastMCP) -> None:
         function_address: Address,
         tail_address: Address,
     ) -> RemoveFunctionTailResult:
-        """Remove a tail (non-contiguous range) from a function body.
+        """Detach the body range that contains tail_address from its function.
 
-        Removes the address range containing ``tail_address`` from the
-        function body.  The entry-point range cannot be removed.
-
-        Args:
-            function_address: Address or name of the owning function.
-            tail_address: Any address within the tail range to remove.
+        Any address inside the range selects it; the range holding the entry point
+        cannot be removed. Inverse of add_function_range. Returns function (entry
+        address), removed_tail_start and removed_tail_end (exclusive).
         """
         from ghidra.program.model.address import AddressSet  # noqa: PLC0415
 
