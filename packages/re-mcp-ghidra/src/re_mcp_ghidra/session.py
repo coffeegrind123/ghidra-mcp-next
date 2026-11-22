@@ -18,10 +18,18 @@ import shutil
 import signal
 
 from re_mcp_ghidra.exceptions import GhidraError
+from re_mcp_ghidra.server_url import GHIDRA_URL_SCHEME, ServerProgram, parse_server_url
 
 log = logging.getLogger(__name__)
 
 _PROJECT_SUBDIR = "ghidra_projects"
+SERVER_USER_ENV = "GHIDRA_MCP_SERVER_USER"
+SERVER_PASSWORD_ENV = "GHIDRA_MCP_SERVER_PASSWORD"
+# Local projects bound to Ghidra Server repositories (one per host/port/repo).
+SHARED_PROJECTS_DIR = os.environ.get(
+    "GHIDRA_MCP_SHARED_PROJECTS",
+    os.path.join(os.path.expanduser("~"), ".local", "share", "ghidra-mcp-next", "shared"),
+)
 _PROJECT_EXT = ".gpr"
 
 
@@ -30,6 +38,7 @@ class Session:
 
     def __init__(self):
         self._program = None
+        self._program_path = ""
         self._consumer = None
         self._project = None
         self._project_location = None
@@ -78,9 +87,10 @@ class Session:
         from ghidra.program.flatapi import FlatProgramAPI  # noqa: PLC0415
         from ghidra.util.task import TaskMonitor  # noqa: PLC0415
 
-        path = os.path.realpath(os.path.expanduser(file_path))
+        is_url = file_path.startswith(GHIDRA_URL_SCHEME)
+        path = file_path if is_url else os.path.realpath(os.path.expanduser(file_path))
 
-        if not os.path.isfile(path):
+        if not is_url and not os.path.isfile(path):
             raise GhidraError(f"File not found: {path}", error_type="FileNotFoundError")
 
         if self.is_open():
@@ -89,7 +99,9 @@ class Session:
         warnings: list[str] = []
         project = None
         try:
-            if path.endswith(_PROJECT_EXT):
+            if is_url:
+                project, prog, consumer = self._open_from_server(parse_server_url(path))
+            elif path.endswith(_PROJECT_EXT):
                 project, prog, consumer = self._open_in_project(path, program)
             else:
                 if program:
@@ -115,9 +127,10 @@ class Session:
             raise GhidraError(f"Failed to open database: {exc}", error_type="RuntimeError") from exc
 
         self._program = prog
+        self._program_path = str(prog.getDomainFile().getPathname())
         self._consumer = consumer
         self._project = project
-        self._project_location = os.path.dirname(path)
+        self._project_location = None if is_url else os.path.dirname(path)
         self._current_path = path
         self._flat_api = FlatProgramAPI(prog, TaskMonitor.DUMMY)
         self.capabilities = self._probe_capabilities()
@@ -162,6 +175,100 @@ class Session:
             project.close()
             raise
         return project, prog, consumer
+
+    @staticmethod
+    def _open_from_server(target: ServerProgram):
+        """Open a program from a Ghidra Server repository.
+
+        The repository is bound to a local shared project under
+        :data:`SHARED_PROJECTS_DIR` (created on first use, reused after), which
+        is where checked-out copies live.  The program opens read-only until it
+        is checked out.
+        """
+        import pyghidra  # noqa: PLC0415
+        from ghidra.framework.client import (  # noqa: PLC0415
+            ClientUtil,
+            PasswordClientAuthenticator,
+        )
+        from ghidra.framework.model import ProjectLocator  # noqa: PLC0415
+        from ghidra.pyghidra import PyGhidraProjectManager  # noqa: PLC0415
+
+        user = os.environ.get(SERVER_USER_ENV) or os.environ.get("USER", "")
+        password = os.environ.get(SERVER_PASSWORD_ENV)
+        if password is None:
+            raise GhidraError(
+                f"Set {SERVER_PASSWORD_ENV} (and {SERVER_USER_ENV}) in the server's "
+                "environment to connect to a Ghidra Server. Passwords are never taken "
+                "as tool arguments.",
+                error_type="NoCredentials",
+            )
+        ClientUtil.setClientAuthenticator(PasswordClientAuthenticator(user, password))
+
+        server = ClientUtil.getRepositoryServer(target.host, target.port, True)
+        if server is None or not server.isConnected():
+            raise GhidraError(
+                f"Cannot connect to Ghidra Server {target.host}:{target.port} as {user!r}.",
+                error_type="ServerUnavailable",
+            )
+        repo = server.getRepository(target.repository)
+        if repo is None:
+            names = ", ".join(str(n) for n in server.getRepositoryNames())
+            raise GhidraError(
+                f"No repository {target.repository!r} on {target.host} (has: {names}).",
+                error_type="NotFound",
+            )
+        repo.connect()
+
+        os.makedirs(SHARED_PROJECTS_DIR, exist_ok=True)
+        locator = ProjectLocator(SHARED_PROJECTS_DIR, target.key)
+        manager = PyGhidraProjectManager()
+        if locator.exists():
+            project = manager.openProject(locator, False, True)
+        else:
+            project = manager.createProject(locator, repo, False)
+
+        try:
+            prog, consumer = pyghidra.consume_program(project, target.path)
+        except FileNotFoundError as exc:
+            project.close()
+            raise GhidraError(
+                f"No program {target.path} in repository {target.repository}.",
+                error_type="NotFound",
+            ) from exc
+        except Exception:
+            project.close()
+            raise
+        return project, prog, consumer
+
+    def reopen(self, while_closed=None) -> None:
+        """Release the current program, optionally run *while_closed*, open it again.
+
+        A program object opened before a checkout stays read-only, and undoing
+        a checkout needs the file released; re-opening picks up the file's new
+        state either way.
+        """
+        import pyghidra  # noqa: PLC0415
+        from ghidra.program.flatapi import FlatProgramAPI  # noqa: PLC0415
+        from ghidra.util.task import TaskMonitor  # noqa: PLC0415
+
+        path = self._program_path
+        self._program.release(self._consumer)
+        try:
+            if while_closed is not None:
+                while_closed()
+        finally:
+            self._program, self._consumer = pyghidra.consume_program(self._project, path)
+            self._flat_api = FlatProgramAPI(self._program, TaskMonitor.DUMMY)
+
+    @property
+    def domain_file(self):
+        """The program's file in its project.
+
+        Not ``program.getDomainFile()``: a versioned file opened before checkout
+        is an immutable copy whose domain file is a proxy that reports itself
+        as unversioned.
+        """
+        return self._project.getProjectData().getFile(self._program_path)
 
     @staticmethod
     def _open_binary(path: str, force_new: bool, language: str, compiler_spec: str):

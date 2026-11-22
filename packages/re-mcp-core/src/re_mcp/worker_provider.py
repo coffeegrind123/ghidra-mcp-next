@@ -1290,7 +1290,10 @@ class WorkerPoolProvider(Provider):
         # Resolve the real path but keep the original extension so the worker
         # can distinguish "raw binary" from "existing database".
         # _canonical_path_for delegates to the backend for dedup keying.
-        resolved = os.path.realpath(os.path.expanduser(file_path))
+        # A URL (e.g. ghidra://server/repo/prog) is not a filesystem path.
+        resolved = (
+            file_path if "://" in file_path else os.path.realpath(os.path.expanduser(file_path))
+        )
         canonical = _canonical_path_for(self._backend, file_path, **backend_kwargs)
         log.debug(
             "spawn_worker: file_path=%s resolved=%s canonical=%s "

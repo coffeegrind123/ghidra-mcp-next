@@ -7,12 +7,14 @@
 from __future__ import annotations
 
 import os
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Annotated, Any
 
+from pydantic import Field
 from re_mcp.backend import BackendInfo
 
 from re_mcp_ghidra import find_ghidra_dir
 from re_mcp_ghidra.exceptions import GhidraError
+from re_mcp_ghidra.server_url import GHIDRA_URL_SCHEME
 from re_mcp_ghidra.transforms import MANAGEMENT_TOOLS, PINNED_TOOLS
 
 INSTRUCTIONS = """\
@@ -119,41 +121,85 @@ class GhidraBackend:
     def register_management_tools(mcp: FastMCP, pool: WorkerPoolProvider) -> None:
         @mcp.tool(annotations={"title": "Open Database"})
         async def open_database(
-            file_path: str,
-            run_auto_analysis: bool = False,
-            keep_open: bool = True,
-            database_id: str = "",
-            force_new: bool = False,
-            language: str = "",
-            compiler_spec: str = "",
-            program: str = "",
+            file_path: Annotated[
+                str,
+                Field(
+                    description=(
+                        "A binary to import (into <its dir>/ghidra_projects/, which must "
+                        "be writable); an existing project's .gpr file (then set "
+                        "program); or a Ghidra Server program URL "
+                        "ghidra://host[:port]/repository/folder/program (credentials from "
+                        "GHIDRA_MCP_SERVER_USER / GHIDRA_MCP_SERVER_PASSWORD). "
+                        'Example: "/work/fw/server.dll"'
+                    )
+                ),
+            ],
+            run_auto_analysis: Annotated[
+                bool,
+                Field(
+                    description=(
+                        "Run Ghidra's full auto-analysis after opening. Use true for a "
+                        "fresh import; an already analyzed program does not need it. "
+                        "Example: true"
+                    )
+                ),
+            ] = False,
+            keep_open: Annotated[
+                bool,
+                Field(
+                    description=(
+                        "Keep this session's other databases open; false closes them "
+                        "first. Example: true"
+                    )
+                ),
+            ] = True,
+            database_id: Annotated[
+                str,
+                Field(
+                    description=(
+                        "Choose the id instead of deriving it from the file name; must "
+                        'match [a-z][a-z0-9_]{0,31}. Example: "srv"'
+                    )
+                ),
+            ] = "",
+            force_new: Annotated[
+                bool,
+                Field(
+                    description=(
+                        "DESTRUCTIVE: delete the binary's existing project and all its "
+                        "analysis and annotations, then re-import. Example: false"
+                    )
+                ),
+            ] = False,
+            language: Annotated[
+                str,
+                Field(
+                    description=(
+                        "Ghidra language id when auto-detection fails (list_targets "
+                        'shows them). Example: "ARM:LE:32:v8"'
+                    )
+                ),
+            ] = "",
+            compiler_spec: Annotated[
+                str,
+                Field(description=('Compiler spec id for language. Example: "gcc" or "windows"')),
+            ] = "",
+            program: Annotated[
+                str,
+                Field(
+                    description=(
+                        "With a .gpr file_path: the program's path inside the project "
+                        '(list_project_files shows them). Example: "/firmware/app.bin"'
+                    )
+                ),
+            ] = "",
         ) -> dict:
             """Open a binary, or a program in an existing Ghidra project.
 
-            Returns immediately with ``"opening": true`` — call
-            wait_for_analysis before using other tools on this database.
-            Re-opening an already-open database returns the existing worker.
-
-            **Multiple binaries:** use a separate subagent per binary.
-
-            **force_new=True** is destructive: deletes existing Ghidra
-            project and all prior analysis.
-
-            Args:
-                file_path: Path to a binary (imported into a project next to it,
-                           ``<dir>/ghidra_projects/``), or to an existing project's
-                           ``.gpr`` file (then ``program`` is required).
-                program: Program path inside the ``.gpr`` project, e.g.
-                         ``/firmware/app.bin``. list_project_files lists them.
-                run_auto_analysis: Run Ghidra auto-analysis after opening.
-                keep_open: Keep other open databases (default True).
-                database_id: Custom ID (must match [a-z][a-z0-9_]{0,31}).
-                force_new: Delete existing project and start fresh.
-                language: Ghidra language ID (e.g. ``x86:LE:64:default``,
-                          ``ARM:LE:32:v8``). Auto-detected when omitted.
-                          Use list_targets to see options.
-                compiler_spec: Ghidra compiler spec (e.g. ``gcc``,
-                               ``windows``). Auto-detected when omitted.
+            Start every session here. Returns at once with {status: "opening",
+            database, file_path, opening: true}; call wait_for_analysis(database)
+            before any other tool. Re-opening an open program returns its existing
+            database id.
             """
             extra = {
                 k: v
@@ -175,7 +221,17 @@ class GhidraBackend:
             )
 
         @mcp.tool(annotations={"title": "List Project Files", "readOnlyHint": True})
-        def list_project_files(project: str) -> dict:
+        def list_project_files(
+            project: Annotated[
+                str,
+                Field(
+                    description=(
+                        "Path to the project's .gpr file. "
+                        'Example: "/home/me/ghidra_projects/fw.gpr"'
+                    )
+                ),
+            ],
+        ) -> dict:
             """List the folders and files stored in an existing Ghidra project.
 
             Use before open_database(file_path=<project>, program=<path>) to find
@@ -186,9 +242,6 @@ class GhidraBackend:
             ["/server.dll", "/drivers/usb.sys"]}``. For a shared (Ghidra Server)
             project, server files that were never checked out are not listed.
 
-            Args:
-                project: Path to the project's ``.gpr`` file, e.g.
-                         ``/home/me/ghidra_projects/fw.gpr``.
             """
             from re_mcp_ghidra.project_index import (  # noqa: PLC0415
                 list_project_files as _list,
@@ -204,6 +257,8 @@ class GhidraBackend:
 
     @staticmethod
     def canonical_path(file_path: str, **kwargs: object) -> str:
+        if file_path.startswith(GHIDRA_URL_SCHEME):
+            return file_path.rstrip("/")
         # One worker per program: a project file plus the program inside it.
         # Path("/p/x.gpr:/dir/app").stem is "app", which becomes the database id.
         path = os.path.realpath(os.path.expanduser(file_path))
