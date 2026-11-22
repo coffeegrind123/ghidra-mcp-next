@@ -2701,15 +2701,10 @@ class TestSupervisorSaveDatabase:
         "call_params,expected",
         [
             pytest.param({}, {}, id="defaults_empty"),
-            pytest.param({"outfile": "/tmp/out.i64"}, {"outfile": "/tmp/out.i64"}, id="outfile"),
-            pytest.param({"flags": 42}, {"flags": 42}, id="flags"),
             pytest.param(
-                {"outfile": "/tmp/out.i64", "flags": 42},
-                {"outfile": "/tmp/out.i64", "flags": 42},
-                id="both",
+                {"comment": "named handlers"}, {"comment": "named handlers"}, id="comment"
             ),
-            pytest.param({"outfile": ""}, {}, id="empty_outfile_omitted"),
-            pytest.param({"flags": -1}, {}, id="default_flags_omitted"),
+            pytest.param({"comment": ""}, {}, id="empty_comment_omitted"),
         ],
     )
     async def test_param_forwarding(self, call_params: dict, expected: dict):

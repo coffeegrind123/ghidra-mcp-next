@@ -79,3 +79,21 @@ def test_instructions_name_disabled_meta_tools():
     off = GhidraBackend.build_instructions(ToolTransform(pinned=PINNED_TOOLS, enable_execute=False))
     assert on == INSTRUCTIONS
     assert off.endswith("Disabled on this server: execute.\n")
+
+
+def _has_any_of(schema: object) -> bool:
+    if isinstance(schema, dict):
+        return "anyOf" in schema or any(_has_any_of(v) for v in schema.values())
+    if isinstance(schema, list):
+        return any(_has_any_of(v) for v in schema)
+    return False
+
+
+def test_meta_tool_inputs_avoid_any_of():
+    # Several MCP clients reject anyOf in input schemas; optional params use
+    # plain types with documented "unset" defaults instead.
+    transform = ToolTransform(pinned=PINNED_TOOLS)
+    for tool in (transform._get_batch_tool(), transform._get_execute_tool()):
+        props = tool.parameters["properties"]
+        assert not _has_any_of(props["if_revision"]), tool.name
+        assert not _has_any_of(props["operation_id"]), tool.name

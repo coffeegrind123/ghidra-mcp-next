@@ -49,6 +49,10 @@ INTERNAL_PREFIX = "_"
 # Must match re_mcp_ghidra.programmable.MAX_BATCH_OPS.
 MAX_BATCH_OPS = 100
 
+# if_revision's "no check" value. A plain int (not int | None) keeps the
+# schema free of anyOf, which several MCP clients do not accept.
+NO_REVISION = -1
+
 MANAGEMENT_TOOLS = frozenset(
     {
         "open_database",
@@ -803,23 +807,25 @@ class ToolTransform(CatalogTransform):
                 ),
             ] = 30,
             if_revision: Annotated[
-                int | None,
+                int,
                 Field(
                     description=(
                         "Refuse with TargetChanged unless the program is still at this "
-                        "revision (from an earlier result). Example: 1284"
+                        "revision (from an earlier result); -1 (default) skips the check. "
+                        "Example: 1284"
                     )
                 ),
-            ] = None,
+            ] = NO_REVISION,
             operation_id: Annotated[
-                str | None,
+                str,
                 Field(
                     description=(
                         "Idempotency key: repeating it returns the stored result "
-                        'instead of running again. Example: "rename-pass-3"'
+                        "instead of running again; empty (default) means none. "
+                        'Example: "rename-pass-3"'
                     )
                 ),
-            ] = None,
+            ] = "",
             ctx: Context | None = None,
         ) -> dict[str, Any] | str:
             """Run Python 3 against the open program, in ONE transaction.
@@ -848,8 +854,8 @@ class ToolTransform(CatalogTransform):
                 "read_only": read_only,
                 "label": label,
                 "timeout_s": timeout_s,
-                "if_revision": if_revision,
-                "operation_id": operation_id,
+                "if_revision": None if if_revision == NO_REVISION else if_revision,
+                "operation_id": operation_id or None,
             }
             task = asyncio.create_task(_safe_call_tool(ctx, "_execute", params))
             await run_with_heartbeat(task, ctx)
@@ -898,23 +904,25 @@ class ToolTransform(CatalogTransform):
                 ),
             ] = "",
             if_revision: Annotated[
-                int | None,
+                int,
                 Field(
                     description=(
                         "Refuse with TargetChanged unless the program is still at this "
-                        "revision (from an earlier result). Example: 1284"
+                        "revision (from an earlier result); -1 (default) skips the check. "
+                        "Example: 1284"
                     )
                 ),
-            ] = None,
+            ] = NO_REVISION,
             operation_id: Annotated[
-                str | None,
+                str,
                 Field(
                     description=(
                         "Idempotency key: repeating it returns the stored result with "
-                        'replayed=true instead of applying twice. Example: "handlers-v1"'
+                        "replayed=true instead of applying twice; empty (default) means "
+                        'none. Example: "handlers-v1"'
                     )
                 ),
-            ] = None,
+            ] = "",
             dry_run: Annotated[
                 bool,
                 Field(
@@ -945,8 +953,8 @@ class ToolTransform(CatalogTransform):
                 "database": database,
                 "ops": [op.model_dump() for op in ops],
                 "label": label,
-                "if_revision": if_revision,
-                "operation_id": operation_id,
+                "if_revision": None if if_revision == NO_REVISION else if_revision,
+                "operation_id": operation_id or None,
                 "dry_run": dry_run,
             }
             task = asyncio.create_task(_safe_call_tool(ctx, "_batch", params))

@@ -11,7 +11,6 @@ import os
 from fastmcp import FastMCP
 from pydantic import BaseModel, Field
 
-from re_mcp_ghidra.exceptions import GhidraError
 from re_mcp_ghidra.helpers import ANNO_MUTATE, ANNO_READ_ONLY, format_address
 from re_mcp_ghidra.session import session
 
@@ -50,6 +49,7 @@ class SaveDatabaseResult(BaseModel):
 
     status: str = Field(description="Status message.")
     path: str = Field(description="Path to the saved database file.")
+    revision: int = Field(description="Program modification number after the save.")
 
 
 def register(mcp: FastMCP) -> None:
@@ -98,7 +98,13 @@ def register(mcp: FastMCP) -> None:
     @mcp.tool(annotations=ANNO_READ_ONLY, tags={"database"})
     @session.require_open
     def get_database_info() -> DatabaseInfoResult:
-        """Get metadata about the currently open database."""
+        """Summarize the open program: format, processor, address range and counts.
+
+        Use first on a newly opened database to orient. Returns {file_path,
+        file_type, processor, compiler_spec, bitness, endian, min_address,
+        max_address, image_base, function_count, segment_count,
+        entry_point_count, capabilities}.
+        """
         program = session.program
         lang = program.getLanguage()
         mem = program.getMemory()
@@ -129,17 +135,11 @@ def register(mcp: FastMCP) -> None:
 
     @mcp.tool(annotations=ANNO_MUTATE, tags={"database"})
     @session.require_open
-    def save_database(outfile: str = "", flags: int = -1) -> SaveDatabaseResult:
-        """Save the current database to disk.
-
-        Args:
-            outfile: Not supported for Ghidra (raises an error if provided).
-            flags: Ignored (IDA-specific).
-        """
-        if outfile:
-            raise GhidraError(
-                "Ghidra does not support saving to an alternate path.",
-                error_type="UnsupportedOperation",
-            )
-        session.save()
-        return SaveDatabaseResult(status="saved", path=session.current_path)
+    def save_database(comment: str = "") -> SaveDatabaseResult:
+        """Write the program's changes to its project. Called through the supervisor."""
+        session.save(comment or "ghidra-mcp-next")
+        return SaveDatabaseResult(
+            status="saved",
+            path=session.current_path,
+            revision=int(session.program.getModificationNumber()),
+        )

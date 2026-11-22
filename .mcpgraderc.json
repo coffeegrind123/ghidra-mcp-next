@@ -1,0 +1,36 @@
+{
+  "roles": {
+    "open_database": "none",
+    "parse_c_source": "none",
+    "search_tools": "search"
+  },
+  "exceptions": [
+    {
+      "rule": "N002",
+      "reason": "get_X/set_X, list_imports/list_exports and X/Xs (decompile_function/decompile_functions) pairs are the conventional names; each description says which one to use when."
+    },
+    {
+      "rule": "T001",
+      "reason": "Only fires with GHIDRA_MCP_DISABLE_TOOL_SEARCH=1, which deliberately lists the whole catalog for clients that defer tools themselves. The default listing is ~22 tools."
+    },
+    {
+      "rule": "T004",
+      "reason": "Same as T001: only the opt-in full listing exceeds 25 tools."
+    },
+    {
+      "rule": "C001",
+      "tool": "rename_decompiler_variable",
+      "reason": "rename_ and retype_decompiler_variable act on the same variable; each description names the other and says it changes only the name or only the type."
+    },
+    {
+      "rule": "P008",
+      "tool": "run_ghidra_script",
+      "reason": "A GhidraScript is arbitrary code against a program that may have changed; replaying a stored result by id would be wrong. batch and execute carry operation_id."
+    },
+    {
+      "rule": "P009",
+      "tool": "run_ghidra_script",
+      "reason": "Existing GhidraScripts cannot be confined to reads; execute(read_only=true) is the read-only route."
+    }
+  ]
+}

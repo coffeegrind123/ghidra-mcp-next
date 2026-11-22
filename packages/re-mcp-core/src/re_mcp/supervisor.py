@@ -26,10 +26,11 @@ import os
 import signal
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Annotated
 
 from fastmcp import FastMCP
 from fastmcp.server.context import Context
+from pydantic import Field
 
 if TYPE_CHECKING:
     from fastmcp.server.auth.auth import AuthProvider
@@ -48,6 +49,8 @@ from re_mcp.worker_provider import (
 log = logging.getLogger(__name__)
 
 _HANDLED_SIGNALS = ("SIGINT", "SIGTERM", "SIGHUP")
+
+DATABASE_DESCRIPTION = 'Database id from open_database or list_databases. Example: "server_dll"'
 
 
 # ---------------------------------------------------------------------------
@@ -89,7 +92,22 @@ class ProxyMCP(FastMCP):
         backend.register_management_tools(self, self._worker_pool)
         self._register_supervisor_resources()
         backend.register_prompts(self)
+        self._declare_explicit_required()
         self.add_transform(transform)
+
+    def _declare_explicit_required(self) -> None:
+        """Give every supervisor tool schema an explicit ``"required"`` array.
+
+        Pydantic omits ``required`` when every parameter has a default, which
+        leaves a client to guess whether they are optional.  The schemas are
+        live dicts, so adding ``"required": []`` after registration sticks.
+        (``_components`` is private to FastMCP; this is the one place that
+        reaches into it.)
+        """
+        for component in self.local_provider._components.values():
+            params = getattr(component, "parameters", None)
+            if isinstance(params, dict) and params.get("type") == "object":
+                params.setdefault("required", [])
 
     @property
     def worker_pool(self) -> WorkerPoolProvider:
@@ -118,16 +136,27 @@ class ProxyMCP(FastMCP):
 
         @self.tool(annotations={"title": "Close Database"})
         async def close_database(
-            save: bool = True,
-            force: bool = False,
-            database: str = "",
+            database: Annotated[str, Field(description=DATABASE_DESCRIPTION)],
+            save: Annotated[
+                bool,
+                Field(description="Save unsaved changes before closing. Example: true"),
+            ] = True,
+            force: Annotated[
+                bool,
+                Field(
+                    description=(
+                        "Close even if this session did not open the database. Example: false"
+                    )
+                ),
+            ] = False,
         ) -> dict:
-            """Close a database and terminate its worker process.
+            """Close a database and stop its worker process.
 
-            Specify *database* when multiple are open. Fails if the DB is
-            not attached to the current session unless force=True. When other
-            sessions still use the DB, detaches this session but keeps the
-            worker alive.
+            Use when finished with a binary, or before opening many others. Saves
+            first unless save=false. When another session still uses the database,
+            only this session detaches and the worker keeps running.
+
+            Returns {status: "closed" | "detached", database, saved}.
             """
             worker = pool.resolve_worker(database)
             result = await pool.close_for_session(
@@ -139,27 +168,40 @@ class ProxyMCP(FastMCP):
 
         @self.tool(annotations={"title": "Save Database"})
         async def save_database(
-            outfile: str = "",
-            flags: int = -1,
-            force: bool = False,
-            database: str = "",
+            database: Annotated[str, Field(description=DATABASE_DESCRIPTION)],
+            comment: Annotated[
+                str,
+                Field(
+                    description=(
+                        "Note stored with this save in the program's history. "
+                        'Example: "named packet handlers"'
+                    )
+                ),
+            ] = "",
+            force: Annotated[
+                bool,
+                Field(
+                    description=(
+                        "Save even if this session did not open the database. Example: false"
+                    )
+                ),
+            ] = False,
             ctx: Context | None = None,
         ) -> dict:
-            """Save the current database to disk (may take minutes for large DBs).
+            """Write the program's changes to its Ghidra project on disk.
 
-            Specify *database* when multiple are open. Fails if the DB is
-            not attached to the current session unless force=True. Progress
-            notifications are sent every 5s during long saves.
+            Nothing a tool, batch or execute changes reaches disk until this runs
+            (close_database also saves). Large programs can take minutes; progress
+            is reported every 5 s. A versioned (Ghidra Server) file must be checked
+            out first, or this fails with ReadOnly.
+
+            Returns {status: "saved", path, revision, database}.
             """
             worker = pool.resolve_worker(database)
             if not force:
                 pool.check_attached(worker, try_get_session_id())
 
-            params: dict = {}
-            if outfile:
-                params["outfile"] = outfile
-            if flags != -1:
-                params["flags"] = flags
+            params: dict = {"comment": comment} if comment else {}
             proxy_task = asyncio.create_task(pool.proxy_to_worker(worker, "save_database", params))
             await run_with_heartbeat(proxy_task, ctx)
             result = proxy_task.result()
@@ -168,35 +210,56 @@ class ProxyMCP(FastMCP):
             require_success(result, result_data, "Save failed")
             return result_data
 
-        @self.tool(annotations={"title": "List Databases"})
+        @self.tool(annotations={"title": "List Databases", "readOnlyHint": True})
         async def list_databases() -> dict:
-            """List all open databases with metadata (includes opening/analyzing status)."""
+            """List the databases open in this server.
+
+            Use to recover database ids, or to see whether one is still opening or
+            analyzing. Returns {databases: [{database, file_path, state, opening,
+            analyzing, attached, ...}]}.
+            """
             return pool.build_database_list(caller_session_id=try_get_session_id())
 
-        @self.tool(annotations={"title": "Wait for Analysis"})
+        @self.tool(annotations={"title": "Wait for Analysis", "readOnlyHint": True})
         async def wait_for_analysis(
-            database: str = "",
-            databases: list[str] | None = None,
+            database: Annotated[
+                str,
+                Field(
+                    description=(
+                        "Database id from open_database; required unless databases is "
+                        'given. Example: "server_dll"'
+                    )
+                ),
+            ] = "",
+            databases: Annotated[
+                list[str],
+                Field(
+                    description=(
+                        "Several database ids: returns as soon as ONE is ready; call "
+                        'again for the rest. Example: ["server_dll", "client_dll"]'
+                    ),
+                ),
+            ] = [],  # noqa: B006 -- read only; a list default keeps the schema free of anyOf
         ) -> dict:
-            """Block until database(s) finish opening and optional auto-analysis.
+            """Block until a database has finished opening (and auto-analysis, if asked).
 
-            **Single:** pass ``database`` to wait for one DB.
-            **Multi:** pass ``databases`` list — returns when **at least one**
-            is ready. Work on the ready one, call again for the rest.
-
-            While analysis runs, the backend thread is blocked — tool calls queue.
-
-            Args:
-                database: Single database ID to wait for.
-                databases: List of database IDs (returns when first is ready).
+            Call after open_database, before any other tool on that database: other
+            tools are refused while it opens. Returns {status: "ready", database,
+            processor, function_count, ...}, or the failure that stopped it.
             """
             if databases:
                 return await pool.wait_for_ready_multi(databases)
             return await pool.wait_for_ready(database)
 
-        @self.tool(annotations={"title": "List Targets"})
+        @self.tool(annotations={"title": "List Targets", "readOnlyHint": True})
         async def list_targets() -> dict:
-            """List available targets (processors, loaders, languages, etc.)."""
+            """List the processor languages and compiler specs this Ghidra supports.
+
+            Use when open_database's auto-detection picks the wrong processor (raw
+            firmware, unusual formats): pass the language id and compiler spec id it
+            returns. Returns {languages: [{id, processor, endian, size, variant,
+            description, compiler_specs: [{id, name}]}]}.
+            """
             return self._backend.list_targets()
 
     # ------------------------------------------------------------------
