@@ -1,347 +1,142 @@
-# RE-MCP
+# ghidra-mcp-next
 
-A reverse-engineering [MCP](https://modelcontextprotocol.io/) server for [Ghidra](https://ghidra-sre.org/). Exposes Ghidra's binary analysis capabilities over the Model Context Protocol, letting LLMs drive reverse engineering directly. Supports multiple simultaneous databases through a supervisor/worker architecture.
+A headless Ghidra MCP server that an agent can program against: a small fixed tool
+list, the whole API discoverable on demand, and changes that are atomic, guarded and
+safe to retry.
 
-The server is standalone, not a plugin. It uses [pyghidra](https://github.com/NationalSecurityAgency/ghidra/tree/master/Ghidra/Features/PyGhidra) to run Ghidra's analysis engine headless, without a GUI.
+Forked from [jtsylve/re-mcp](https://github.com/jtsylve/re-mcp) (its Ghidra backend),
+reduced to Ghidra only and rebuilt around transactions.
 
-## Backends
+## What it does differently
 
-| Backend | Package | Requirements |
-|---------|---------|--------------|
-| **Ghidra** | [`re-mcp-ghidra`](packages/re-mcp-ghidra/) | Ghidra 12+, JDK 21+ |
+- **Atomic batches.** `batch` runs up to 100 tool calls as one Ghidra transaction.
+  If any call fails, nothing changes, and the error names the failing op. A
+  successful batch is one undo step named `MCP: <label>`. Later ops can use earlier
+  results: `"$0.start"`, `"handler_${1.address}"`.
+- **Real code mode.** `execute` runs Python 3 (CPython through pyghidra) against the
+  Ghidra API and every tool (`tools.rename_function(...)`), in one transaction, with a
+  read-only mode, a timeout and capped output.
+- **Guards.** `if_revision` refuses to act on a program that changed since you read
+  it. `operation_id` makes a retried write return the stored result instead of
+  applying twice.
+- **Small catalog.** 22 tools are listed. About 120 more are found with
+  `search_tools` and called through `call`, `batch` or `execute`, and
+  `ghidra://api/tools.pyi` serves all of them as typed Python signatures. The
+  catalog costs ~6k tokens per request, and both the listed tools and the full
+  catalog score A 100 on [mcpgrade](https://github.com/coffeegrind123/mcpgrade)'s
+  code-mode profile.
+- **Projects and servers.** It opens binaries, programs inside existing `.gpr`
+  projects, and programs on a Ghidra Server (`ghidra://host/repo/path`) with
+  checkout, checkin, history and undo-checkout.
+- **Scripts.** `run_ghidra_script` runs existing Java or Python GhidraScripts in
+  one transaction.
 
-Besides the core analysis tools, the backend has tools for Ghidra-specific features such as Function ID analysis and data type archives.
+Opening programs without `GhidraProject` is what makes rollback, undo and save
+work. `GhidraProject` holds a transaction open on every program it opens, which
+makes aborts deferred, undo impossible and save fail. See
+[`context/design.md`](context/design.md) for the measured behaviour.
 
 ## Requirements
 
-- Python 3.12+
-- [uv](https://docs.astral.sh/uv/) package manager (recommended) or pip
-- macOS, Windows, or Linux
-- Ghidra installed on the same machine
+- Ghidra 12.0 or newer (CI tests 12.0.3 and 12.1.4)
+- JDK 21 (a JDK, not a JRE, to compile Java GhidraScripts)
+- Python 3.12+ and [uv](https://docs.astral.sh/uv/)
 
-## Installation
-
-Install the backend package directly, or install `re-mcp` and select the backend with `--backend`:
+## Install
 
 ```bash
-# Backend package (provides its own CLI)
-uv tool install re-mcp-ghidra
-
-# Or install the core package and use --backend to select
-uv tool install re-mcp --with re-mcp-ghidra
-```
-
-With pip:
-
-```bash
-pip install re-mcp-ghidra             # Backend CLI
-pip install re-mcp re-mcp-ghidra      # Unified CLI
-```
-
-### From source
-
-```bash
-git clone https://github.com/jtsylve/ida-mcp && cd ida-mcp
+git clone https://github.com/coffeegrind123/ghidra-mcp-next
+cd ghidra-mcp-next
 uv sync
 ```
 
-Or with pip:
-
-```bash
-git clone https://github.com/jtsylve/ida-mcp && cd ida-mcp
-pip install -e packages/re-mcp-core -e packages/re-mcp-ghidra
-```
-
-### Finding Ghidra
-
-The Ghidra backend looks for your Ghidra installation in the following order:
-
-1. **`GHIDRA_INSTALL_DIR` environment variable** — checked first; set this if Ghidra is in a non-standard location.
-2. **Config file** — `ghidra-install-dir` in `~/.ghidra/ghidra-config.json`.
-3. **Platform-specific default paths:**
-
-| Platform | Default search paths |
-|----------|---------------------|
-| macOS    | `/Applications/ghidra_*`, `~/ghidra_*` |
-| Windows  | `C:\ghidra_*`, `~/ghidra_*` |
-| Linux    | `/opt/ghidra_*`, `/usr/local/ghidra_*`, `~/ghidra_*` |
-
-## Usage
-
-### Running the server
-
-The backend has its own CLI, or use the unified `re-mcp` command with `--backend`:
-
-```bash
-# Backend CLI
-uvx re-mcp-ghidra
-
-# Unified CLI (requires backend package installed alongside)
-uvx --with re-mcp-ghidra re-mcp --backend ghidra
-```
-
-Both CLIs support the same subcommands:
-
-| Command | Description |
-|---------|-------------|
-| `<backend>` (or `<backend> stdio`) | Direct stdio mode — single-session, workers die on disconnect (default) |
-| `<backend> proxy` | Stdio proxy that auto-spawns a persistent HTTP daemon |
-| `<backend> serve` | Start the HTTP daemon directly (for manual daemon management) |
-| `<backend> stop` | Gracefully shut down a running daemon |
-| `<backend> backends` | List installed backends (most useful with the unified `re-mcp` CLI) |
-
-The default mode runs a direct stdio server — the simplest transport, widely supported across MCP clients. Workers die when the client disconnects.
-
-For persistent state across reconnections, use `<backend> proxy`. This mode auto-spawns a persistent HTTP daemon behind the scenes, handling port allocation and authentication transparently. Workers and database state survive client reconnections. The daemon shuts down automatically after 5 minutes of inactivity (configurable via `<PREFIX>IDLE_TIMEOUT`).
-
-### Running without installing
-
-```bash
-# Backend package
-GHIDRA_INSTALL_DIR=/path/to/ghidra uvx re-mcp-ghidra
-
-# Unified package
-GHIDRA_INSTALL_DIR=/path/to/ghidra uvx --with re-mcp-ghidra re-mcp --backend ghidra
-```
-
-```powershell
-# Backend package
-$env:GHIDRA_INSTALL_DIR = "C:\ghidra_12.0.3_PUBLIC"
-uvx re-mcp-ghidra
-
-# Unified package
-uvx --with re-mcp-ghidra re-mcp --backend ghidra
-```
-
-### MCP client configuration
-
-Add to your MCP client config (e.g. Claude Desktop `claude_desktop_config.json`):
+## Configure (Claude Code)
 
 ```json
 {
   "mcpServers": {
     "ghidra": {
-      "command": "uvx",
-      "args": ["re-mcp-ghidra"]
-    }
-  }
-}
-```
-
-**Using the unified `re-mcp` CLI (when installed via `uv tool install re-mcp --with re-mcp-ghidra`):**
-
-```json
-{
-  "mcpServers": {
-    "ghidra": {
-      "command": "re-mcp",
-      "args": ["--backend", "ghidra"]
-    }
-  }
-}
-```
-
-If the backend command is installed on your `PATH` (e.g. via `pip install`), use it directly:
-
-```json
-{
-  "mcpServers": {
-    "ghidra": {
-      "command": "re-mcp-ghidra"
-    }
-  }
-}
-```
-
-If the command isn't on your `PATH`, use the full path to the executable:
-
-```json
-{
-  "mcpServers": {
-    "ghidra": {
-      "command": "/home/user/.pyenv/versions/<version>/bin/re-mcp-ghidra"
-    }
-  }
-}
-```
-
-If Ghidra isn't in a default location, add the install directory via the `env` key:
-
-```json
-{
-  "mcpServers": {
-    "ghidra": {
-      "command": "uvx",
-      "args": ["re-mcp-ghidra"],
+      "type": "stdio",
+      "command": "/path/to/ghidra-mcp-next/.venv/bin/ghidra-mcp-next",
       "env": {
-        "GHIDRA_INSTALL_DIR": "/path/to/ghidra"
+        "GHIDRA_INSTALL_DIR": "/opt/ghidra_12.0.3_PUBLIC",
+        "JAVA_HOME": "/opt/jdk-21"
       }
     }
   }
 }
 ```
 
-**Connecting to a running daemon directly:**
+## Working with it
 
-If you started the daemon manually with `<backend> serve`, the connection details (host, port, bearer token) are in the state file. Clients that support streamable HTTP can connect directly.
-
-State file locations:
-- **macOS:** `~/Library/Application Support/<backend>/daemon.json`
-- **Linux:** `$XDG_STATE_HOME/<backend>/daemon.json` (defaults to `~/.local/state/<backend>/daemon.json`)
-- **Windows:** `%LOCALAPPDATA%\<backend>\daemon.json`
-
-Where `<backend>` is `re-mcp-ghidra`.
-
-```json
-{
-  "mcpServers": {
-    "ghidra": {
-      "type": "streamable-http",
-      "url": "http://127.0.0.1:<port>/mcp",
-      "headers": {
-        "Authorization": "Bearer <token>"
-      }
-    }
-  }
-}
+```text
+open_database(file_path="/work/fw.bin", run_auto_analysis=true)  -> {database: "fw_bin"}
+wait_for_analysis(database="fw_bin")
+decompile_function(database="fw_bin", address="0x401000")
+batch(database="fw_bin", label="name the parser", ops=[
+  {"tool": "rename_function", "params": {"address": "0x401000", "new_name": "parse_packet"}},
+  {"tool": "set_function_prototype", "params": {"address": "0x401000",
+     "type_string": "int parse_packet(byte *buf, uint len)"}},
+  {"tool": "set_comment", "params": {"address": "0x401000", "comment": "Entry of the parser",
+     "comment_type": "plate"}}])
+save_database(database="fw_bin")
 ```
 
-### Basic workflow
-
-1. **Open a binary** — call `open_database` with the path to a binary (or existing database file), then `wait_for_analysis` to block until it is ready
-2. **Analyze** — use the available tools (list functions, decompile, search strings, read bytes, etc.)
-3. **Close** — call `close_database` when done (auto-saves by default)
-
-Raw binaries must be in a writable directory since Ghidra creates project files alongside them. When opening an existing database, the original binary does not need to be present.
-
-### Multi-database mode
-
-Multiple databases can be open at the same time. By default, `open_database` keeps previously opened databases open. Pass `keep_open=False` to save and close databases owned by the current session before opening the new one. All tools except management tools (`open_database`, `close_database`, `save_database`, `list_databases`, `wait_for_analysis`, `list_targets`) require the `database` parameter (the stem ID returned by `open_database` or `list_databases`).
-
-```
-open_database("first.bin")                              # spawns worker (returns immediately)
-wait_for_analysis(database="first")                     # blocks until ready
-open_database("second.bin")                             # spawns second worker
-wait_for_analysis(database="second")                    # blocks until ready
-decompile_function(address="main", database="first")    # targets first
-close_database(database="second")                       # closes second
+```python
+# execute: rename every small unnamed function, as one undo step
+from ghidra.program.model.symbol import SourceType
+n = 0
+for f in program.getFunctionManager().getFunctions(True):
+    if f.getName().startswith("FUN_") and f.getBody().getNumAddresses() < 16:
+        f.setName("stub_" + f.getName()[4:], SourceType.USER_DEFINED)
+        n += 1
+return n
 ```
 
-### Environment variables
+| Source | `open_database` arguments |
+|---|---|
+| A binary | `file_path="/path/bin"`: imported into `/path/ghidra_projects/` |
+| An existing project | `file_path="/path/proj.gpr", program="/folder/prog"` (`list_project_files` lists them) |
+| A Ghidra Server | `file_path="ghidra://host[:port]/repository/folder/prog"`, then `checkout_file` before editing |
 
-Settings use the `GHIDRA_MCP_` environment variable prefix. The table below uses `<PREFIX>` as a placeholder.
+Every tool is listed in [docs/tools.md](docs/tools.md).
 
-**Backend installation:**
+## Environment variables
 
-| Variable | Backend | Default | Description |
-|----------|---------|---------|-------------|
-| `GHIDRA_INSTALL_DIR` | Ghidra | *(auto-detected)* | Path to Ghidra installation directory |
+| Variable | Default | Meaning |
+|---|---|---|
+| `GHIDRA_INSTALL_DIR` | auto-detected | Ghidra installation |
+| `GHIDRA_MCP_SERVER_USER` / `GHIDRA_MCP_SERVER_PASSWORD` | `$USER` / unset | Ghidra Server credentials. Never accepted as tool arguments. |
+| `GHIDRA_MCP_SHARED_PROJECTS` | `~/.local/share/ghidra-mcp-next/shared` | Local projects bound to server repositories |
+| `GHIDRA_MCP_SCRIPT_DIRS` | unset | Extra GhidraScript directories (`:`-separated), searched before `~/ghidra_scripts` and Ghidra's own |
+| `GHIDRA_MCP_DISABLE_EXECUTE` | unset | `1` removes `execute` (arbitrary Python in the server) |
+| `GHIDRA_MCP_DISABLE_BATCH` | unset | `1` removes `batch` |
+| `GHIDRA_MCP_DISABLE_TOOL_SEARCH` | unset | `1` lists every tool instead of 22 plus search |
+| `GHIDRA_MCP_MAX_WORKERS` | unlimited | Most databases open at once (1-8) |
+| `GHIDRA_MCP_LOG_LEVEL` / `GHIDRA_MCP_LOG_DIR` | `WARNING` / unset | Logging |
 
-**Shared settings** (replace `<PREFIX>` with `GHIDRA_MCP_`):
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `<PREFIX>MAX_WORKERS` | *(unlimited)* | Maximum simultaneous databases (clamped to 1-8 when set) |
-| `<PREFIX>LOG_LEVEL` | `WARNING` | Logging level (`DEBUG`, `INFO`, `WARNING`, `ERROR`, `CRITICAL`) — output goes to stderr |
-| `<PREFIX>LOG_DIR` | *(unset)* | Directory for per-run log files. Each component logs to `<dir>/<run_id>-<label>.log`, each worker to `<dir>/<run_id>-worker-<db>.log`, and each worker's raw stderr to `<dir>/<run_id>-worker-<db>.stderr`. When unset, logs go only to stderr. |
-| `<PREFIX>IDLE_TIMEOUT` | `300` | Idle auto-shutdown timeout in seconds for auto-spawned daemons. Set to `0` to disable. `<backend> serve` defaults to `0` (use `--idle-timeout=N` to override). |
-| `<PREFIX>DISABLE_EXECUTE` | *(unset)* | Set to `1`, `true`, `yes`, or `on` to hide the `execute` meta-tool (sandboxed Python code mode) |
-| `<PREFIX>DISABLE_BATCH` | *(unset)* | Set to `1`, `true`, `yes`, or `on` to hide the `batch` meta-tool |
-| `<PREFIX>DISABLE_TOOL_SEARCH` | *(unset)* | Set to `1`, `true`, `yes`, or `on` to disable server-side progressive tool disclosure — all tools become directly visible and callable, and the `search_tools` and `get_schema` meta-tools are removed. Useful with clients that provide their own tool deferral (e.g. Claude Code). |
-
-## Tools
-
-To keep token usage manageable, only common analysis tools and management tools are directly visible to clients. The rest are discoverable and callable through meta-tools:
-
-- **`search_tools`** — regex search over non-pinned tool names, descriptions, and tags (pinned tools are already visible).
-- **`get_schema`** — parameter schemas and return shapes for tools by name.
-- **`call`** — lightweight proxy for calling any tool by name, including hidden tools not in the client tool list.
-- **`execute`** — sandboxed Python that chains multiple `await invoke(name, params)` calls in a single round trip. Supports `asyncio.gather` for parallel queries, loops, and conditional logic between calls.
-- **`batch`** — sequential multi-tool execution with per-item error collection and progress reporting (up to 50 operations per call).
-
-Management tools (`open_database`, `close_database`, `save_database`, `list_databases`, `wait_for_analysis`, `list_targets`) are always visible. Most must be called directly — `save_database` and `list_databases` are the exceptions, also callable through `call`, `execute`, and `batch` for use in multi-step workflows.
-
-The full tool catalog spans these areas:
-
-- **Database** — open/close/save/list databases, file region mapping, metadata
-- **Functions** — list, query, decompile, disassemble, rename, prototypes, chunks, stack frames
-- **Decompiler** — pseudocode variable renaming/retyping, decompiler comments, microcode
-- **Ctree** — AST exploration and pattern matching
-- **Cross-References** — xref queries, call graphs, xref creation/deletion
-- **Imports & Exports** — imported functions, exported symbols, entry point listing and manipulation
-- **Search** — string extraction, byte patterns, text in disassembly, immediate values, string-to-code references, string list rebuilding
-- **Types & Structures** — local types, structs, enums, type parsing and application, source declarations
-- **Instructions & Operands** — decode instructions, resolve operand values, change operand display format
-- **Control Flow** — basic blocks, CFG edges, switch/jump tables
-- **Data** — raw byte reading, hex dumps, segment listing, pointer tables
-- **Patching** — byte patching, instruction assembly, function/code creation, data loading
-- **Data Definition** — define bytes, words, dwords, qwords, floats, doubles, strings, and arrays
-- **Segments** — create, modify, and rebase segments
-- **Names & Comments** — rename addresses, manage comments (get, set, and append)
-- **Demangling** — C++ symbol name demangling
-- **Analysis** — auto-analysis, fixups, exception handlers, segment registers
-- **Address Metadata** — source line numbers, analysis flags, library item marking
-- **Register Tracking** — register and stack pointer value tracking
-- **Register Variables** — register-to-name mappings within functions
-- **Signatures** — Function ID and data type archives
-- **Export** — batch decompilation/disassembly, output file generation
-- **Processor** — architecture info, register names, instruction classification
-- **Bookmarks** — marked-position management
-- **Colors** — address/function coloring
-- **Undo** — undo/redo operations
-- **Directory Tree** — folder organization
-- **Utility** — number conversion, expression evaluation, scripting
-
-All tools include MCP [annotations](https://modelcontextprotocol.io/docs/concepts/tools#annotations) (`readOnlyHint`, `destructiveHint`, `idempotentHint`, `openWorldHint`) so clients can distinguish safe reads from mutations and prompt for confirmation on destructive operations. Mutation tools return old values alongside new values for change tracking.
-
-See [docs/tools.md](docs/tools.md) for the complete tools reference.
-
-## Resources
-
-The server exposes [MCP resources](https://modelcontextprotocol.io/docs/concepts/resources) — read-only, cacheable endpoints for structured database context:
-
-- **Static binary data** — imports, exports, entry points (with regex search variants)
-- **Aggregate snapshot** — statistics (function/segment/entry point/string/name counts, code coverage)
-- **Supervisor** — `<scheme>://databases` lists all open databases with worker state
-
-The URI scheme is `ghidra://`.
-
-## Architecture
-
-The project is a monorepo with two packages:
-
-- [`re-mcp-core`](packages/re-mcp-core/) — shared supervisor infrastructure, transport, and common utilities
-- [`re-mcp-ghidra`](packages/re-mcp-ghidra/) — Ghidra backend
-
-See [docs/architecture.md](docs/architecture.md) for detailed architecture documentation.
+`execute` and `run_ghidra_script` run arbitrary code with the server's
+privileges. The server listens on stdio by default; `serve` binds HTTP to
+`127.0.0.1` with a bearer token.
 
 ## Development
 
 ```bash
-# With uv (recommended)
-uv sync                              # Install dependencies
-uv run ruff check packages/          # Lint
-uv run ruff format packages/         # Format
-uv run ruff check --fix packages/    # Lint with auto-fix
-
-# With pip
-pip install -e packages/re-mcp-core -e packages/re-mcp-ghidra
-pip install pre-commit pytest pytest-asyncio ruff jsonschema
-ruff check packages/
-ruff format packages/
-ruff check --fix packages/
+uv run ruff check packages tests && uv run ruff format --check packages tests
+uv run pytest                                        # unit tests; live ones skip
+GHIDRA_INSTALL_DIR=/opt/ghidra uv run pytest tests/live   # against real Ghidra
+GHIDRA_INSTALL_DIR=/opt/ghidra uv run python scripts/gen_tools_doc.py
 ```
 
-Pre-commit hooks run REUSE compliance checks, ruff lint (with `--fix --exit-non-zero-on-fix`), ruff format, and pytest on every commit.
+`tests/live` drives the real server through MCP: transactions, rollback, undo,
+save and reopen, scripts, and a throwaway Ghidra Server for version control.
 
 ## License
 
-This project is dual-licensed under the [MIT License](LICENSES/MIT.txt) and [Apache License 2.0](LICENSES/Apache-2.0.txt).
+Dual-licensed under the [MIT License](LICENSES/MIT.txt) and
+[Apache License 2.0](LICENSES/Apache-2.0.txt), as upstream.
 
-© 2026 Joe T. Sylve, Ph.D.
+© 2026 Joe T. Sylve, Ph.D. (upstream re-mcp) and ghidra-mcp-next contributors.
 
-This project is [REUSE compliant](https://reuse.software/).
-
----
-
-*Ghidra is developed by the NSA. RE-MCP is an independent project and is not affiliated with or endorsed by the NSA.*
+*Ghidra is developed by the NSA. This project is not affiliated with or endorsed
+by the NSA.*

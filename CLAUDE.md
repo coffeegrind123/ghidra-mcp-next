@@ -4,13 +4,22 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project
 
-Reverse-engineering MCP server for Ghidra. Python + FastMCP, stdio and streamable HTTP transports. Backend: Ghidra (pyghidra).
+ghidra-mcp-next: headless Ghidra MCP server (fork of jtsylve/re-mcp, Ghidra only). Python + FastMCP, stdio and streamable HTTP transports, pyghidra.
+
+Design: `context/design.md` (transactions, batch, execute, measured Ghidra behaviour), `context/renames.md` (tool names vs upstream).
+
+- Never open programs through `GhidraProject`: it holds a transaction open (deferred aborts, no undo, save fails). Use `session.open` / pyghidra's project API, and `session.analyze` for auto-analysis.
+- `batch` / `execute` run in the worker (`re_mcp_ghidra.programmable`) as one main-thread job in one transaction. A tool that manages its own transaction or the worker goes in `NOT_IN_TRANSACTION`.
+- Tools whose name starts with `_` are internal: never listed, searched or callable through `call`.
+- Every tool and parameter needs a description (`Annotated[..., Field(description="... Example: ...")]`) that says when to use it and what it returns. Check with `/mcp-audit`; `.mcpgraderc.json` holds the accepted exceptions. Regenerate `docs/tools.md` with `scripts/gen_tools_doc.py`.
+- Live tests (`tests/live`, real Ghidra and a throwaway Ghidra Server) run in CI on Ghidra 12.0.3 and 12.1.4.
 
 ## Commands
 
 ```bash
 uv sync                              # Install dependencies
-uv run re-mcp-ghidra                 # Run Ghidra backend (direct stdio mode)
+uv run ghidra-mcp-next               # Run the server (direct stdio mode; alias re-mcp-ghidra)
+GHIDRA_INSTALL_DIR=/opt/ghidra uv run pytest tests/live   # Against real Ghidra
 uv run ruff check packages/          # Lint
 uv run ruff format packages/         # Format
 uv run ruff check --fix packages/    # Lint with auto-fix

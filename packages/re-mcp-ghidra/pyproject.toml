@@ -31,6 +31,7 @@ Documentation = "https://github.com/jtsylve/ida-mcp/tree/main/docs"
 
 [project.scripts]
 re-mcp-ghidra = "re_mcp_ghidra._cli:main"
+ghidra-mcp-next = "re_mcp_ghidra._cli:main"
 re-mcp-ghidra-worker = "re_mcp_ghidra.server:main"
 
 [project.entry-points."re_mcp.backends"]

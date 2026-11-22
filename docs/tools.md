@@ -1,538 +1,274 @@
-# Tools Reference
-
-Complete reference for all tools provided by RE-MCP. Both backends (IDA and Ghidra) share a common set of core analysis tools with the same names, parameters, and response shapes. Each backend also has tools for platform-specific features. Tools that are backend-specific are marked with (IDA) or (Ghidra).
-
-## Tool Discovery
-
-To keep token usage manageable, only common analysis tools and management tools are directly visible to clients. Five meta-tools handle discovery and batching of the full catalog:
-
-| Tool | Description |
-|------|-------------|
-| `search_tools` | Search for non-pinned tools by regex pattern (matched against names, descriptions, and tags). Use `.*` to list all hidden tools. Pinned tools are already visible in the tool listing. |
-| `get_schema` | Get parameter schemas and return shapes for specific tools by name. Pass `detail="full"` for complete JSON schemas. Works for both pinned and hidden tools. |
-| `call` | Lightweight proxy for calling any tool by name, including hidden tools not in the client tool list. |
-| `execute` | Execute sandboxed Python code that chains multiple `await invoke(name, params)` invocations in a single round trip. Supports `asyncio.gather` for parallel queries, loops, and result processing between calls. |
-| `batch` | Execute multiple tool calls sequentially in a single request (max 50). Collects per-item results and errors. Use for applying the same operation to many targets or mixing different operations without per-call round-trip overhead. |
-
-Tools not in the pinned set are hidden from the listing but callable via `call`, `batch`, or `execute`.
-
-## Conventions
-
-**Addresses** can be specified as hex strings (`"0x401000"`), decimal (`"4198400"`), symbol names (`"main"`), or bare hex (`"4010a0"` — used as a last resort when the string is not a known symbol). Prefer the `0x` prefix for unambiguous hex.
-
-**Pagination** — tools that return lists accept `offset` (default 0) and `limit` (default 100; some tools default to 50 or 20) parameters, and return `items`, `total`, `offset`, `limit`, and `has_more` fields.
-
-**Multi-database** — all tools except management tools (`open_database`, `close_database`, `save_database`, `list_databases`, `wait_for_analysis`, `list_targets`) require the `database` parameter (the stem ID returned by `open_database` or `list_databases`).
-
-**Errors** — tools raise a `BackendError` subclass (`IDAError` or `GhidraError`) on failure. FastMCP catches this and returns `isError=True` with a JSON text body containing `error`, `error_type`, and optional detail fields (e.g. `available_variables`, `valid_types`).
-
-**Old values** — mutation tools return the previous state of modified items (e.g. `old_comment`, `old_type`, `old_bytes`, `old_flags`) alongside the new values, enabling undo tracking and change verification.
-
----
-
-## Database
-
-Core database lifecycle management.
-
-| Tool | Description |
-|------|-------------|
-| `open_database` | Open a binary file or existing database for analysis. Must be called before any analysis tool. By default, previously opened databases from this session remain open; pass `keep_open=False` to save and close databases owned by the current session first. Use `database_id` to assign a custom identifier. Returns immediately — the database is not ready for tool calls until `wait_for_analysis` returns. When `run_auto_analysis=True`, `wait_for_analysis` also waits for auto-analysis to complete. Pass `force_new=True` to delete any existing database files and start fresh (destructive). **IDA-specific:** `processor`, `loader`, `base_address`, `options` override auto-detection for raw binaries; `fat_arch` selects a Mach-O universal slice. **Ghidra-specific:** `language` and `compiler_spec` override auto-detection. See `list_targets` for available options. |
-| `close_database` | Close a database, optionally saving changes. When other sessions are still attached, detaches the current session and keeps the worker alive. Use `force=True` to close regardless of other sessions. |
-| `save_database` | Save a database without closing it. Fails if the database is not attached to the current session unless `force=True`. |
-| `list_databases` | List all currently open databases with metadata (file path, processor, bitness, etc.). Includes `opening` and `analyzing` flags for databases that are still loading or being analyzed. |
-| `get_database_info` | Get metadata: file path, processor, bitness, file type, address range, counts. |
-| `get_database_paths` | Get file paths associated with current database (IDA). |
-| `get_database_flags` | Get database flags (IDA). |
-| `set_database_flag` | Set or clear a database flag (IDA). |
-| `flush_buffers` | Flush internal buffers to disk (IDA). |
-| `get_fileregion_ea` | Map a file offset to a virtual address (IDA). |
-| `get_fileregion_offset` | Map a virtual address to a file offset (IDA). |
-| `get_elf_debug_file_directory` | Get the ELF debug file directory path (IDA). |
-| `reload_file` | Reload byte values from the input file (IDA). |
-| `wait_for_analysis` | Wait for one or more databases to finish opening and/or auto-analysis. Blocks until the database is ready for tool calls. Call this after `open_database`. Pass `databases` (a list) to wait for several at once — returns as soon as at least one is ready. |
-| `list_targets` | List available processor modules, loaders, and language/compiler options. Returns names that can be passed to `open_database`. |
-
-## Functions
-
-Function analysis — listing, querying, decompilation, and disassembly.
-
-| Tool | Description |
-|------|-------------|
-| `list_functions` | List functions with optional regex filter and type filtering (thunk, library, noreturn, user). Supports batch mode for multiple patterns in one pass. Paginated. |
-| `get_function` | Get detailed info for a function at an address or by name: name, bounds, size, flags, comments, and chunks. |
-| `decompile_function` | Decompile a function to pseudocode. Accepts address or name. For multiple functions, use the `batch` meta-tool. |
-| `disassemble_function` | Get the full disassembly listing of a function. |
-| `rename_function` | Rename a function. |
-| `delete_function` | Delete a function definition (underlying code remains). |
-| `set_function_bounds` | Change a function's end address (IDA). |
-
-## Function Types
-
-Function prototypes and calling conventions.
-
-| Tool | Description |
-|------|-------------|
-| `get_function_prototype` | Get function signature, return type, calling convention, and parameters. |
-| `set_function_prototype` | Set a function's prototype from a C declaration string. |
-| `set_function_calling_convention` | Change calling convention (cdecl, stdcall, fastcall, thiscall, pascal). |
-
-## Function Flags
-
-Function flags, byte flags, and hidden ranges.
-
-| Tool | Description |
-|------|-------------|
-| `set_function_flags` | Set function flags: library, thunk, noreturn, hidden. Only provided flags are changed. |
-| `get_code_unit` | Get flags/status at an address: code/data/head/tail indicators, xrefs, names, comments, item size. |
-| `add_hidden_range` | Create a hidden (collapsed) range with a description (IDA). |
-| `delete_hidden_range` | Delete a hidden range (IDA). |
-| `get_hidden_ranges` | List all hidden ranges. Paginated (IDA). |
-
-## Function Chunks
-
-Function chunks (non-contiguous tail regions).
-
-| Tool | Description |
-|------|-------------|
-| `list_function_ranges` | List all chunks of a function. |
-| `add_function_range` | Append a tail region to a function. |
-| `remove_function_range` | Remove a tail from a function. |
-| `set_tail_owner` | Change which function owns a tail chunk (IDA). |
-
-## Stack Frames
-
-Stack frame and local variable analysis.
-
-| Tool | Description |
-|------|-------------|
-| `get_stack_frame` | Get the stack frame layout: members with offsets, sizes, and names. |
-| `get_function_vars` | Get local variables via decompilation: names, types, widths, arg/result flags. |
-
-## Cross-References
-
-Cross-reference queries and call graph analysis.
-
-| Tool | Description |
-|------|-------------|
-| `get_xrefs_to` | Get all references TO an address (what references it). For multiple addresses, use the `batch` meta-tool. Paginated. |
-| `get_xrefs_from` | Get all references FROM an address (what it references). Paginated. |
-| `get_call_graph` | Get the call graph for a function — callers and callees. `depth` controls traversal (1-3, default 1). |
-
-## Cross-Reference Manipulation
-
-Add and delete cross-references.
-
-| Tool | Description |
-|------|-------------|
-| `add_code_xref` | Add a code cross-reference (fl_CF, fl_CN, fl_JF, fl_JN, fl_F). |
-| `add_data_xref` | Add a data cross-reference (dr_R, dr_W, dr_O, dr_I, dr_T, dr_S). |
-| `delete_code_xref` | Delete a code cross-reference. |
-| `delete_data_xref` | Delete a data cross-reference. |
-
-## Search
-
-String extraction, pattern searching, and string-to-code reference lookup.
-
-| Tool | Description |
-|------|-------------|
-| `rebuild_string_list` | Rebuild the string list from scratch. Call after patching bytes or defining new data that may create or destroy strings (IDA). |
-| `list_strings` | Extract strings from the binary with optional minimum length and regex filter. Supports batch mode for multiple patterns in one pass. Paginated. |
-| `find_code_by_string` | Find functions that reference strings matching a regex. Combines string search, xref lookup, and function resolution in one call. |
-| `search_bytes` | Search for a hex byte pattern. Spaces separate bytes; wildcards (`??`) are supported in IDA only. |
-| `search_text` | Search for text in disassembly mnemonics and operands (not string data — use `list_strings` for that). |
-| `find_immediate` | Find instructions with a specific immediate operand value (IDA). |
-
-## Data
-
-Read raw bytes, list segments, and read pointer tables.
-
-| Tool | Description |
-|------|-------------|
-| `read_bytes` | Read raw bytes at an address (max 4096). Returns hex and formatted hex dump. |
-| `list_memory_blocks` | List all segments with name, bounds, class, permissions, and bitness. Paginated. |
-| `read_pointer_table` | Read an array of pointers from the database. Resolves names and auto-detects strings at target addresses. Useful for vtables, dispatch tables, and token dictionaries (IDA). |
-
-## Data Definition
-
-Define data types at addresses.
-
-| Tool | Description |
-|------|-------------|
-| `create_data` | Define data at an address as byte, word, dword, qword, float, or double. Pass count > 1 to create an array. |
-| `create_string` | Define a string at an address. Supports C (ASCII), UTF-16, and UTF-32 encodings. Length 0 (default) auto-detects null terminator. |
-| `create_array` | Create an array at an address with a given element size and count. |
-
-## Imports and Exports
-
-Imported functions, exported symbols, and entry points.
-
-| Tool | Description |
-|------|-------------|
-| `list_imports` | List imported functions, optionally filtered by module name. Paginated. |
-| `list_exports` | List exported symbols. Paginated. |
-| `list_entry_points` | List entry points. Paginated. |
-| `set_import_name` | Set the name of an import entry (IDA). |
-| `set_import_ordinal` | Set the ordinal of an import entry (IDA). |
-
-## Entry Point Manipulation
-
-Add, rename, and manage entry points. Forwarder tools are IDA-only.
-
-| Tool | Description |
-|------|-------------|
-| `add_entry_point` | Add an entry point with a name and ordinal. |
-| `rename_entry_point` | Rename an entry point by ordinal. |
-| `set_entry_forwarder` | Set a forwarder name for an entry point (e.g. "NTDLL.RtlAllocateHeap") (IDA). |
-| `get_entry_forwarder` | Get the forwarder name for an entry point (IDA). |
-
-## Comments
-
-Address and function comments.
-
-| Tool | Description |
-|------|-------------|
-| `get_comment` | Get regular and repeatable comments at an address. |
-| `set_comment` | Set a comment at an address (regular or repeatable). |
-| `append_comment` | Append text to an existing comment without overwriting. Skips if text already present (IDA). |
-| `get_function_comment` | Get regular and repeatable comments for a function. |
-| `set_function_comment` | Set a function comment (repeatable by default). |
-
-## Names
-
-Global naming and labeling.
-
-| Tool | Description |
-|------|-------------|
-| `rename_symbol` | Rename any address (globals, labels, etc.). |
-| `list_names` | List all named locations with optional regex filter. Supports batch mode for multiple patterns in one pass. Paginated. |
-
-## Demangling
-
-C++ symbol name demangling.
-
-| Tool | Description |
-|------|-------------|
-| `demangle_name` | Demangle a C++ symbol name. |
-| `demangle_at_address` | Demangle the symbol at a given address. |
-| `list_demangled_names` | List demangled C++ names with optional regex filter. Supports batch mode for multiple patterns in one pass. Paginated. |
-
-## Instructions and Operands
-
-Instruction decoding and operand value resolution.
-
-| Tool | Description |
-|------|-------------|
-| `decode_instruction` | Decode a single instruction with full operand details. |
-| `decode_instructions` | Decode multiple consecutive instructions (max 200). |
-| `get_operand_value` | Get the resolved value of an instruction operand. |
-
-## Operand Display
-
-Change how operands are displayed in the disassembly.
-
-| Tool | Description |
-|------|-------------|
-| `set_operand_format` | Change operand display format (hex, decimal, binary, octal, or char). |
-| `set_operand_offset` | Convert an operand to an offset/pointer with a given base (IDA). |
-| `set_operand_enum` | Apply an enum type to an operand (IDA). |
-| `set_operand_struct_offset` | Apply a struct member offset to an operand (IDA). |
-
-## Control Flow
-
-Basic blocks and control flow graph edges.
-
-| Tool | Description |
-|------|-------------|
-| `get_basic_blocks` | Get all basic blocks of a function with successors and predecessors. |
-| `get_cfg_edges` | Get CFG edges as (from, to) address pairs. |
-
-## Decompiler
-
-Decompiler interaction — variable management, microcode, and comments.
-
-| Tool | Description |
-|------|-------------|
-| `rename_decompiler_variable` | Rename a local variable in pseudocode. |
-| `retype_decompiler_variable` | Change the type of a local variable in pseudocode. |
-| `list_decompiler_variables` | List all variables in a function's pseudocode. |
-| `get_microcode` | Get microcode at a given maturity level (IDA). |
-| `set_decompiler_comment` | Set a comment in pseudocode at a specific address. |
-| `get_decompiler_comments` | Get all user comments in a function's pseudocode. |
-
-## Ctree
-
-Decompiler AST (ctree) exploration and pattern matching.
-
-| Tool | Description |
-|------|-------------|
-| `get_decompiler_tokens` | Get the decompiler AST for a function. `depth` is 1-10 (default 3). |
-| `find_decompiled_calls` | Find function calls in the AST, optionally filtered by callee name. |
-| `find_ctree_patterns` | Find patterns in the AST: calls, string_refs, comparisons, assignments, casts, pointer_derefs, or all (IDA). |
-
-## Types
-
-Type query and application.
-
-| Tool | Description |
-|------|-------------|
-| `get_type_info` | Get the type applied at an address. |
-| `set_type` | Apply a C type declaration at an address. |
-
-## Type Information
-
-Local type management and type library operations.
-
-| Tool | Description |
-|------|-------------|
-| `list_data_types` | List all local types with ordinal, name, size, and classification. Paginated. |
-| `get_data_type` | Get full type details by name, including struct/union members. |
-| `parse_type_declaration` | Parse a C type declaration into the type library. |
-| `delete_data_type` | Delete a local type by name. |
-| `delete_local_type_by_ordinal` | Delete a local type by ordinal number (IDA). |
-| `apply_type_at_address` | Apply a named local type at an address. |
-
-## Structures
-
-Structure and union creation and modification.
-
-| Tool | Description |
-|------|-------------|
-| `list_structures` | List all structures with index, ID, name, and size. Paginated. |
-| `get_structure` | Get structure details: members with offsets, names, and sizes. |
-| `create_structure` | Create a new structure or union. |
-| `delete_structure` | Delete a structure by name (IDA). |
-| `add_struct_member` | Add a member to a structure (offset -1 appends). |
-| `rename_struct_member` | Rename a structure member (IDA). |
-| `delete_struct_member` | Delete a structure member (IDA). |
-| `retype_struct_member` | Change a structure member's type. |
-| `set_struct_member_comment` | Set a comment on a structure member (IDA). |
-
-## Enums
-
-Enum creation and management.
-
-| Tool | Description |
-|------|-------------|
-| `list_enums` | List all enums with ordinal, name, and member count. Paginated. |
-| `create_enum` | Create a new enum or bitfield. |
-| `delete_enum` | Delete an enum by name. |
-| `add_enum_member` | Add a member to an enum with a value. |
-| `get_enum_members` | List enum members with names and values. Paginated. |
-| `rename_enum` | Rename an enum. |
-| `delete_enum_member` | Delete an enum member by value. |
-| `rename_enum_member` | Rename an enum member. |
-| `set_enum_member_comment` | Set a comment on an enum member (IDA). |
-
-## Segments
-
-Segment creation and modification.
-
-| Tool | Description |
-|------|-------------|
-| `create_memory_block` | Create a new segment with name, bounds, class, bitness, and permissions. |
-| `delete_memory_block` | Delete a segment. |
-| `rename_memory_block` | Rename a segment. |
-| `set_memory_block_permissions` | Change segment permissions (RWX format). |
-| `set_segment_bitness` | Change segment bitness (0=16-bit, 1=32-bit, 2=64-bit) (IDA). |
-| `set_segment_class` | Change the segment class string (IDA). |
-
-## Rebase
-
-Segment moving and program rebasing.
-
-| Tool | Description |
-|------|-------------|
-| `move_segment` | Move a segment to a new start address (IDA). |
-| `set_image_base` | Rebase the entire program by a delta. |
-
-## Patching
-
-Binary modification — byte patching, function/code creation, undefine.
-
-| Tool | Description |
-|------|-------------|
-| `patch_bytes` | Patch bytes at an address (creates an undo point). Returns old and new bytes. |
-| `create_function` | Create a function at an address with auto-detected boundaries. |
-| `disassemble_at` | Mark bytes as a code instruction (without creating a function). |
-| `clear_code_units` | Undefine items at an address, converting them back to raw bytes. |
-
-## Assembly
-
-Instruction assembly and patching.
-
-| Tool | Description |
-|------|-------------|
-| `assemble_instruction` | Assemble a mnemonic string into bytes at an address (does not modify the database). |
-| `patch_instruction` | Assemble an instruction and patch it into the database in one step (creates an undo point). |
-
-## Signatures
-
-Signature libraries, type libraries, and identification modules. IDA uses FLIRT signatures and type libraries (TILs); Ghidra uses Function ID (FID) and data type archives (.gdt).
-
-| Tool | Description |
-|------|-------------|
-| `apply_flirt_signature` | Apply a FLIRT signature library by name (IDA). |
-| `list_flirt_signatures` | List all applied FLIRT signatures (IDA). |
-| `generate_signatures` | Generate FLIRT signatures (.sig and .pat files) (IDA). |
-| `load_type_library` | Load a type library (e.g. gnulnx_x64, mssdk_win10) (IDA). |
-| `list_type_libraries` | List all loaded type libraries (IDA). |
-| `load_ids_module` | Load and apply an IDS file (IDA). |
-| `apply_function_id` | Apply Function ID (FID) analysis to identify known library functions (Ghidra). |
-| `list_data_type_archives` | List data type archives (.gdt) available in the type manager (Ghidra). |
-
-## Source Language
-
-Source language parsing — import type declarations from source code.
-
-| Tool | Description |
-|------|-------------|
-| `get_source_parser` | Get the current source parser name (IDA). |
-| `parse_c_source` | Parse source declarations into types using a compiler parser. IDA supports C, C++, Objective-C, Swift, and Go; Ghidra supports C only. |
-
-## Analysis
-
-Auto-analysis control, problems, fixups, exception handlers, and segment registers.
-
-| Tool | Description |
-|------|-------------|
-| `reanalyze_range` | Trigger auto-analysis on an address range. |
-| `get_analysis_problems` | List analysis problems and conflicts. Paginated. |
-| `get_fixups` | List relocation/fixup records in an address range. Paginated (IDA). |
-| `get_exception_handlers` | Get exception try/catch blocks for a function (IDA). |
-| `get_segment_registers` | Get segment register values (CS, DS, ES, FS, GS, SS) at an address (IDA). |
-| `set_segment_register` | Set a segment register value at an address (IDA). |
-
-## Address Metadata
-
-Source line numbers, analysis flags, and library item marking.
-
-| Tool | Description |
-|------|-------------|
-| `get_source_line_number` | Get the source line mapping at an address (IDA). |
-| `set_source_line_number` | Set a source line mapping at an address (IDA). |
-| `get_address_info` | Get all analysis flags for an address: noreturn, library, hidden, type guess source, SP delta. |
-| `set_library_item` | Mark an address as library code (IDA). |
-
-## Register Tracking
-
-Register and stack pointer value tracking.
-
-| Tool | Description |
-|------|-------------|
-| `find_register_value` | Track a register value backward from an address. |
-| `find_stack_pointer_value` | Track the stack pointer value at an address (IDA). |
-
-## Register Variables
-
-Register-to-name mappings within functions.
-
-| Tool | Description |
-|------|-------------|
-| `add_regvar` | Map a register to a user-defined name within an address range (IDA). |
-| `delete_regvar` | Remove a register variable mapping (IDA). |
-| `get_regvar` | Get a register variable at a specific address (IDA). |
-| `list_regvars` | List all register variables in a function. |
-| `rename_regvar` | Rename a register variable. |
-| `set_regvar_comment` | Set a comment on a register variable (IDA). |
-
-## Switches
-
-Switch/jump table analysis.
-
-| Tool | Description |
-|------|-------------|
-| `get_switch_info` | Get switch table info at an indirect jump: cases, targets, element size. |
-| `list_switches` | Find all switches in the database. Paginated. |
-
-## Bookmarks
-
-Bookmark (marked position) management.
-
-| Tool | Description |
-|------|-------------|
-| `set_bookmark` | Set a bookmark at an address with a description (slot -1 auto-assigns). |
-| `list_bookmarks` | List all bookmarks. Paginated. |
-| `delete_bookmark` | Delete a bookmark by slot number. |
-
-## Colors
-
-Address and function coloring.
-
-| Tool | Description |
-|------|-------------|
-| `set_color` | Set the background color of an address, function, or segment (RRGGBB hex or empty to remove). |
-| `get_color` | Get the background color at an address. |
-
-## Load Data
-
-Load additional data into the database.
-
-| Tool | Description |
-|------|-------------|
-| `load_additional_binary` | Load an additional binary file into the database at a given address, creating a new segment (IDA). |
-| `load_bytes_from_file` | Load bytes from an external file into the database at a target address (IDA). |
-| `load_bytes_from_memory` | Load hex-encoded bytes directly into the database at a target address. |
-
-## Export
-
-Batch export tools, output file generation, and executable rebuilding.
-
-| Tool | Description |
-|------|-------------|
-| `decompile_functions` | Batch decompile functions (default 50 per call). Optional regex filter. Paginated. |
-| `disassemble_functions` | Batch export disassembly for functions (default 50 per call). Optional regex filter. Paginated. |
-| `generate_output_file` | Generate an IDA output file (asm, lst, map, dif, idc) (IDA). |
-| `generate_exe_file` | Rebuild an executable from the database (IDA). |
-
-## Directory Tree
-
-Directory tree (folder organization).
-
-| Tool | Description |
-|------|-------------|
-| `list_program_tree` | List folders and items in a directory tree. |
-| `create_program_tree_folder` | Create a folder in a tree. |
-| `rename_program_tree_folder` | Rename or move a folder. |
-| `delete_program_tree_folder` | Delete an empty folder. |
-
-## Undo
-
-Undo and redo operations.
-
-| Tool | Description |
-|------|-------------|
-| `undo` | Undo the last modification. |
-| `redo` | Redo the last undone change. |
-
-## Snapshots
-
-Database snapshot management — persistent point-in-time captures that survive across sessions.
-
-| Tool | Description |
-|------|-------------|
-| `take_snapshot` | Take a snapshot of the current database state with an optional description. |
-| `list_snapshots` | List all snapshots as a flattened tree with depth information. |
-| `restore_snapshot` | Restore a previously taken snapshot (replaces current database state) (IDA). |
-
-## Utility
-
-Number conversion, expression evaluation, and scripting.
-
-| Tool | Description |
-|------|-------------|
-| `convert_number` | Convert between hex, decimal, octal, and binary representations. |
-| `evaluate_expression` | Evaluate an IDC expression (IDA). |
-| `run_script` | Execute arbitrary IDAPython code. Only available when `IDA_MCP_ALLOW_SCRIPTS` is set (IDA). |
-
-## Processor
-
-Architecture and instruction set information.
-
-| Tool | Description |
-|------|-------------|
-| `get_processor_info` | Get processor/architecture info: name, bitness, register names. |
-| `get_register_name` | Get a register name by number and width. |
-| `is_call_instruction` | Check if an instruction is a call. |
-| `is_return_instruction` | Check if an instruction is a return. |
-| `is_alignment_instruction` | Check if an instruction is a NOP/alignment padding (IDA). |
-| `get_instruction_list` | Get all mnemonics supported by the current processor (IDA). |
+# Tools
+
+Generated by `scripts/gen_tools_doc.py` from the server's own catalog; do not edit.
+
+**Listed** tools are in every client's tool list. The rest are found with
+`search_tools` and called through `call`, `batch` (as an op) or `execute`
+(`tools.<name>(...)`). `ghidra://api/tools.pyi` has every tool's full typed
+signature and documentation.
+
+## analysis
+
+| Tool | Listed | What it does |
+|---|---|---|
+| `find_decompiled_calls` |  | Find function call sites in the decompiled output. |
+| `find_register_value` |  | Guess a register's constant value at an instruction from the instructions before it. |
+| `get_analysis_problems` |  | List analysis problems found by Ghidra (ERROR and WARNING bookmarks). |
+| `get_basic_blocks` |  | Get basic blocks of a function (CFG nodes with successor/predecessor lists). |
+| `get_cfg_edges` |  | Get CFG edges as (source, target) pairs (compact, for graph visualization). |
+| `get_processor_info` |  | Describe the program's processor: language ID, pointer size, endianness, registers. |
+| `get_register_name` |  | Map a register-space offset and size to the register's name. |
+| `get_switch_info` |  | Get switch/jump table structure at a computed jump instruction. |
+| `is_call_instruction` |  | Test whether the instruction at an address is a call (its flow type is a call). |
+| `is_return_instruction` |  | Test whether the instruction at an address ends the function (terminal flow). |
+| `list_switches` |  | Scan every function for computed-jump instructions (switch/jump tables), paginated. |
+| `reanalyze_range` |  | Disassemble from start_address to end_address, then rerun auto-analysis. |
+| `run_auto_analysis` |  | Run Ghidra's full auto-analysis again on the open program, and wait. |
+| `score_documentation` |  | Rank functions by how much documentation they still need, worst first. |
+
+## assembler
+
+| Tool | Listed | What it does |
+|---|---|---|
+| `assemble_instruction` |  | Assemble one instruction for an address without writing it (dry run). |
+| `patch_instruction` |  | Assemble one instruction and overwrite the bytes at an address with it. |
+
+## colors
+
+| Tool | Listed | What it does |
+|---|---|---|
+| `get_color` |  | Read the background color set on a code unit or a function's entry. |
+| `set_color` |  | Set or clear the background color of a code unit or of a whole function. |
+
+## comments
+
+| Tool | Listed | What it does |
+|---|---|---|
+| `get_comment` |  | Read every listing comment on the code unit at an address. |
+| `get_decompiler_comments` |  | List pre-comments (visible in decompiler) for a function. |
+| `get_function_comment` |  | Read the header comments of the function containing an address. |
+| `set_comment` |  | Write or clear one listing comment slot at an address, replacing its text. |
+| `set_decompiler_comment` |  | Write the PRE comment at an address; it shows above that line in pseudocode. |
+| `set_function_comment` |  | Write or clear the header comment of the function containing an address. |
+
+## data
+
+| Tool | Listed | What it does |
+|---|---|---|
+| `list_memory_blocks` |  | List all memory segments/blocks. |
+| `read_bytes` |  | Read raw bytes from program memory starting at an address. |
+
+## database
+
+| Tool | Listed | What it does |
+|---|---|---|
+| `get_database_info` | yes | Summarize the open program: format, processor, address range and counts. |
+
+## decompiler
+
+| Tool | Listed | What it does |
+|---|---|---|
+| `decompile_function` | yes | Decompile the function containing an address to C pseudocode. |
+| `decompile_functions` |  | Decompile MANY functions in one call (expensive -- seconds each). |
+| `get_decompiler_tokens` |  | Return the decompiler token tree for a function as a structured dict. |
+| `get_function_vars` |  | Decompile the function containing an address and list its typed locals and params. |
+| `list_decompiler_variables` |  | List decompiler locals and parameters for a function. |
+| `rename_decompiler_variable` |  | Rename a local variable or parameter in a function's decompiled output. |
+| `retype_decompiler_variable` |  | Change the data type of a local variable or parameter in decompiled output. |
+
+## disassembly
+
+| Tool | Listed | What it does |
+|---|---|---|
+| `decode_instruction` |  | Decode the single instruction at an address, with per-operand detail. |
+| `decode_instructions` |  | Decode up to count consecutive instructions from an address, ignoring function bounds. |
+| `disassemble_functions` |  | Disassemble MANY functions in one call (paginated, regex-filterable). |
+| `get_operand_value` |  | Get the numeric value of one instruction operand (immediate or referenced address). |
+
+## enums
+
+| Tool | Listed | What it does |
+|---|---|---|
+| `add_enum_member` |  | Add one named value to an existing enum. |
+| `create_enum` |  | Create an empty 4-byte enum in the root category; add values with add_enum_member. |
+| `delete_enum` |  | Delete a whole enum type from the data type manager. |
+| `delete_enum_member` |  | Remove the member with a given value from an enum; the enum itself stays. |
+| `get_enum_members` |  | List all members of an enum, paginated. |
+| `list_enums` |  | List all enums in the database, paginated. |
+| `rename_enum` |  | Rename an enum type itself; its members are unchanged. |
+| `rename_enum_member` |  | Rename the enum member that has a given value, keeping the value. |
+
+## functions
+
+| Tool | Listed | What it does |
+|---|---|---|
+| `add_function_range` |  | Add the range [start, end) to the body of the function containing function_address. |
+| `delete_function` |  | Remove the function definition containing an address; instructions stay. |
+| `disassemble_function` | yes | List every instruction in the body of the function containing an address. |
+| `get_code_unit` |  | Classify what occupies an address: instruction, defined data or undefined bytes. |
+| `get_function` | yes | Describe the function containing an address: bounds, signature and flags. |
+| `get_function_prototype` |  | Get the full type signature (prototype) of a function. |
+| `get_stack_frame` |  | Show the listing stack-frame layout of the function containing an address. |
+| `list_function_ranges` |  | List all address ranges (chunks) in a function body. |
+| `list_functions` | yes | List all functions in the database, paginated with optional regex filter. |
+| `remove_function_range` |  | Detach the body range that contains tail_address from its function. |
+| `rename_function` |  | Rename the function containing an address. |
+| `set_function_calling_convention` |  | Change only the calling convention of the function containing an address. |
+| `set_function_flags` |  | Set or clear noreturn, inline and library flags on the function containing an address. |
+| `set_function_prototype` |  | Set a function's full C prototype (return + args + calling convention). |
+
+## lifecycle
+
+| Tool | Listed | What it does |
+|---|---|---|
+| `batch` | yes | Run several tool calls in order as ONE atomic change. |
+| `call` | yes | Call any tool by name, including hidden tools not in the client tool list. |
+| `close_database` | yes | Close a database and stop its worker process. |
+| `execute` | yes | Run Python 3 against the open program, in ONE transaction. |
+| `list_databases` | yes | List the databases open in this server. |
+| `list_project_files` | yes | List the folders and files stored in an existing Ghidra project. |
+| `list_targets` | yes | List the processor languages and compiler specs this Ghidra supports. |
+| `open_database` | yes | Open a binary, or a program in an existing Ghidra project. |
+| `save_database` | yes | Write the program's changes to its Ghidra project on disk. |
+| `wait_for_analysis` | yes | Block until a database has finished opening (and auto-analysis, if asked). |
+
+## metadata
+
+| Tool | Listed | What it does |
+|---|---|---|
+| `add_entry_point` |  | Mark an address as an external entry point and name its primary symbol. |
+| `create_program_tree_folder` |  | Create one folder (module) in a program tree under an existing parent folder. |
+| `delete_program_tree_folder` |  | Delete an empty folder (module) from a program tree. |
+| `get_address_info` |  | Classify one address: code, data or undefined, plus its name, xrefs and function. |
+| `list_entry_points` |  | List binary entry points (main/start/exports). |
+| `list_exports` |  | List all exported symbols. |
+| `list_imports` |  | List all imported functions/symbols. |
+| `list_program_tree` |  | List folders and fragments in Ghidra's program tree. |
+| `rename_entry_point` |  | Rename the primary symbol of an address that is already an entry point. |
+| `rename_program_tree_folder` |  | Rename a program-tree folder in place; it is not moved to another parent. |
+
+## modification
+
+| Tool | Listed | What it does |
+|---|---|---|
+| `clear_code_units` |  | Undefine code and data over a byte range, leaving the byte values unchanged. |
+| `create_array` |  | Define an array of unsigned integer elements (1/2/4/8 bytes each) at an address. |
+| `create_data` |  | Define a primitive numeric data item (or array of them) at an address. |
+| `create_function` |  | Define a function whose entry is the given address; Ghidra derives its body. |
+| `create_string` |  | Define a string data item at an address, auto-sizing to the terminator by default. |
+| `disassemble_at` |  | Disassemble the single instruction at an address, without creating a function. |
+| `patch_bytes` |  | Overwrite raw bytes at an address with literal hex bytes (destructive). |
+| `set_operand_format` |  | Change how a numeric operand or data value is displayed (hex/dec/bin/oct/char). |
+
+## names
+
+| Tool | Listed | What it does |
+|---|---|---|
+| `list_names` |  | List all named locations, paginated with optional regex filter. |
+| `rename_symbol` |  | Rename the primary symbol at an address, or create a label if it has none. |
+
+## navigation
+
+| Tool | Listed | What it does |
+|---|---|---|
+| `delete_bookmark` |  | Delete the bookmarks at an address, optionally only those in one category. |
+| `list_bookmarks` |  | List all bookmarks in the database, paginated. |
+| `set_bookmark` |  | Add a Note-type bookmark at an address under a category, with a description. |
+
+## scripts
+
+| Tool | Listed | What it does |
+|---|---|---|
+| `list_ghidra_scripts` |  | List the GhidraScripts run_ghidra_script can run by name. |
+| `run_ghidra_script` |  | Run an existing GhidraScript (Java or Python) on the open program. |
+
+## search
+
+| Tool | Listed | What it does |
+|---|---|---|
+| `find_code_by_string` | yes | Find every reference to defined strings whose value matches a regex. |
+| `list_strings` | yes | List defined string data items, optionally filtered by a case-insensitive regex. |
+| `search_bytes` |  | Find occurrences of an exact byte sequence in program memory. |
+| `search_text` |  | Search the disassembly text of every instruction for a regex. |
+
+## segments
+
+| Tool | Listed | What it does |
+|---|---|---|
+| `create_memory_block` |  | Create a new zero-filled, initialized memory block from start_address to end_address. |
+| `delete_memory_block` |  | Delete the whole memory block containing an address, along with its bytes. |
+| `rename_memory_block` |  | Rename the memory block (segment) containing an address. |
+| `set_image_base` |  | Rebase the whole program by moving its image base by a signed delta. |
+| `set_memory_block_permissions` |  | Replace the read/write/execute flags of the memory block containing an address. |
+
+## signatures
+
+| Tool | Listed | What it does |
+|---|---|---|
+| `apply_function_id` |  | Match functions against Ghidra Function ID (FID) databases to name library code. |
+| `list_data_type_archives` |  | List data type archives (.gdt) available in the program's type manager. |
+
+## structs
+
+| Tool | Listed | What it does |
+|---|---|---|
+| `add_struct_member` |  | Append a member to a struct/union, or place it at a byte offset over existing bytes. |
+| `create_structure` |  | Create an empty structure or union in the root category of the type manager. |
+| `delete_struct_member` |  | Remove one member from a struct or union; the type itself stays. |
+| `delete_structure` |  | Delete one structure or union type by name from the data type manager. |
+| `get_structure` |  | Show the full member layout of one structure or union. |
+| `list_structures` |  | List all structures and unions in the database. |
+| `rename_struct_member` |  | Rename one member of a structure or union, keeping its type and offset. |
+| `retype_struct_member` |  | Change the data type of one existing struct/union member, keeping its name. |
+
+## symbols
+
+| Tool | Listed | What it does |
+|---|---|---|
+| `demangle_at_address` |  | Demangle the primary symbol name at an address; read-only. |
+| `demangle_name` |  | Demangle a symbol string you already have, using Ghidra's demanglers. |
+| `list_demangled_names` |  | List named addresses with demangled forms (C++ only; paginated, regex-filterable). |
+
+## types
+
+| Tool | Listed | What it does |
+|---|---|---|
+| `apply_type_at_address` |  | Define data of an existing named type at an address, clearing code units it overlaps. |
+| `delete_data_type` |  | Delete any data type by exact name from the program's data type manager. |
+| `get_data_type` |  | Get detailed type information including members by name. |
+| `get_type_info` |  | Report what type is applied at an address: a function's prototype or a data item's type. |
+| `list_data_types` |  | List locally defined data types. |
+| `parse_c_source` |  | Parse C type declarations with Ghidra's CParser and add the parsed type to the program. |
+| `parse_type_declaration` |  | Parse one C type declaration and add the resulting type to the program. |
+| `set_type` |  | Define data of a C-style type at an address, clearing code units it overlaps. |
+
+## utility
+
+| Tool | Listed | What it does |
+|---|---|---|
+| `convert_number` |  | Convert a number between hex, decimal, octal, and binary representations. |
+| `redo` |  | Redo the most recently undone step. Returns the redone step's name. |
+| `undo` | yes | Undo the most recent change (one batch or execute is one step). |
+
+## versioning
+
+| Tool | Listed | What it does |
+|---|---|---|
+| `checkin_file` |  | Publish the checked-out program's changes as a new server version. |
+| `checkout_file` |  | Check out the open versioned program so it can be changed and saved. |
+| `get_version_history` |  | List every server version of the open program, oldest first. |
+| `get_version_state` |  | Report the open program's version-control state. |
+| `list_checkouts` |  | List who has the open program checked out (all users). |
+| `undo_checkout` |  | Discard the checkout and every change made since it. |
+
+## xrefs
+
+| Tool | Listed | What it does |
+|---|---|---|
+| `add_code_xref` |  | Add a user-defined call, jump or fall-through reference between two addresses. |
+| `add_data_xref` |  | Add a user-defined data reference (read, write, pointer) between two addresses. |
+| `delete_code_xref` |  | Remove the control-flow (call/jump) reference from one address to another. |
+| `delete_data_xref` |  | Remove the data (read/write/pointer) reference from one address to another. |
+| `get_call_graph` |  | Build the caller/callee tree around the function containing an address. |
+| `get_xrefs_from` | yes | List outgoing references: what the instruction or data at an address refers to. |
+| `get_xrefs_to` | yes | List incoming references: every place that calls, jumps to or accesses an address. |
