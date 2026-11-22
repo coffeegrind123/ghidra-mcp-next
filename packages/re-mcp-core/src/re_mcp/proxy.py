@@ -160,9 +160,7 @@ def _spawn_daemon(backend: type[Backend]) -> dict:
     state_dir_name = info.state_dir_name
     env_prefix = info.env_prefix
     idle_timeout_env = f"{env_prefix}IDLE_TIMEOUT"
-    idle_timeout_str = os.environ.get(idle_timeout_env) or os.environ.get(
-        "IDA_MCP_IDLE_TIMEOUT", str(_DEFAULT_IDLE_TIMEOUT)
-    )
+    idle_timeout_str = os.environ.get(idle_timeout_env, str(_DEFAULT_IDLE_TIMEOUT))
     try:
         idle_timeout = int(idle_timeout_str)
     except ValueError:

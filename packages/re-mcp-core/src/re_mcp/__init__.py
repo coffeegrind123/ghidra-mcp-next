@@ -22,11 +22,9 @@ def ensure_run_id(*, env_key: str = "RE_MCP_LOG_RUN") -> str:
     so child worker processes inherit it and log to files with the same
     timestamp prefix.
     """
-    for key in (env_key, "IDA_MCP_LOG_RUN"):
-        run_id = os.environ.get(key)
-        if run_id:
-            os.environ.setdefault(env_key, run_id)
-            return run_id
+    run_id = os.environ.get(env_key)
+    if run_id:
+        return run_id
     run_id = _dt.datetime.now().strftime("%Y%m%d-%H%M%S")
     os.environ[env_key] = run_id
     return run_id
@@ -48,7 +46,7 @@ def resolve_log_file(
     Returns ``<dir>/<run_id>-<sanitized_label><suffix>`` or ``None`` when
     the log directory environment variable is unset.
     """
-    log_dir = os.environ.get(env_key) or os.environ.get("IDA_MCP_LOG_DIR")
+    log_dir = os.environ.get(env_key)
     if not log_dir:
         return None
     path = os.path.expanduser(log_dir)
@@ -63,14 +61,11 @@ def configure_logging(*, label: str = "", env_prefix: str = "RE_MCP_") -> None:
     """Configure logging from environment variables.
 
     Reads ``{env_prefix}LOG_LEVEL`` (default WARNING) and optionally tees
-    to a file under ``{env_prefix}LOG_DIR``.  Falls back to ``IDA_MCP_``
-    prefixed variables for backward compatibility.
+    to a file under ``{env_prefix}LOG_DIR``.
     """
     if not label:
-        label = os.environ.get(f"{env_prefix}LABEL") or os.environ.get("IDA_MCP_LABEL", "")
-    level_name = (
-        os.environ.get(f"{env_prefix}LOG_LEVEL") or os.environ.get("IDA_MCP_LOG_LEVEL", "WARNING")
-    ).upper()
+        label = os.environ.get(f"{env_prefix}LABEL", "")
+    level_name = os.environ.get(f"{env_prefix}LOG_LEVEL", "WARNING").upper()
     level = getattr(logging, level_name, None)
     if not isinstance(level, int):
         level = logging.WARNING

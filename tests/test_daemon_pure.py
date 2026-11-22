@@ -6,7 +6,7 @@
 
 These tests cover state file management, bearer token auth, daemon liveness
 checks, and the loopback detection helper — all functions that can run
-without idalib or a running daemon.
+without a backend engine or a running daemon.
 """
 
 from __future__ import annotations
@@ -206,22 +206,25 @@ class TestStateDir:
     def test_darwin(self, monkeypatch):
         monkeypatch.setattr("sys.platform", "darwin")
         monkeypatch.setattr("pathlib.Path.home", lambda: __import__("pathlib").Path("/Users/test"))
-        assert str(_state_dir("re-mcp-ida")) == "/Users/test/Library/Application Support/re-mcp-ida"
+        assert (
+            str(_state_dir("re-mcp-ghidra"))
+            == "/Users/test/Library/Application Support/re-mcp-ghidra"
+        )
 
     def test_linux_default(self, monkeypatch):
         monkeypatch.setattr("sys.platform", "linux")
         monkeypatch.delenv("XDG_STATE_HOME", raising=False)
         monkeypatch.setattr("pathlib.Path.home", lambda: __import__("pathlib").Path("/home/test"))
-        assert str(_state_dir("re-mcp-ida")) == "/home/test/.local/state/re-mcp-ida"
+        assert str(_state_dir("re-mcp-ghidra")) == "/home/test/.local/state/re-mcp-ghidra"
 
     def test_linux_xdg(self, monkeypatch):
         monkeypatch.setattr("sys.platform", "linux")
         monkeypatch.setenv("XDG_STATE_HOME", "/custom/state")
-        assert str(_state_dir("re-mcp-ida")) == "/custom/state/re-mcp-ida"
+        assert str(_state_dir("re-mcp-ghidra")) == "/custom/state/re-mcp-ghidra"
 
     def test_windows(self, monkeypatch):
         monkeypatch.setattr("sys.platform", "win32")
         monkeypatch.setenv("LOCALAPPDATA", "C:\\Users\\test\\AppData\\Local")
-        result = _state_dir("re-mcp-ida")
-        assert result.parts[-1] == "re-mcp-ida"
+        result = _state_dir("re-mcp-ghidra")
+        assert result.parts[-1] == "re-mcp-ghidra"
         assert "AppData" in str(result)

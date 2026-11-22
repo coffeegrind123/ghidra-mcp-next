@@ -21,7 +21,6 @@ jobs:
       - uses: astral-sh/setup-uv@v6
       - run: uv run ruff check packages/
       - run: uv run ruff format --check packages/
-      - run: uv run python scripts/lint_ida_threading.py
 
   reuse:
     runs-on: ubuntu-latest

@@ -5,7 +5,7 @@
 """Unit tests for supervisor / worker_provider pure utility functions.
 
 These tests cover prefix_uri, extract_db_prefix, and capability-based
-tool/resource filtering — all functions that can run without idalib loaded.
+tool/resource filtering — all functions that can run without a backend engine loaded.
 """
 
 from __future__ import annotations
@@ -57,9 +57,9 @@ from re_mcp.worker_provider import (
     extract_db_prefix,
     prefix_uri,
 )
-from re_mcp_ida.backend import IDABackend
-from re_mcp_ida.exceptions import IDAError
-from re_mcp_ida.transforms import MANAGEMENT_TOOLS, PINNED_TOOLS
+from re_mcp_ghidra.backend import GhidraBackend
+from re_mcp_ghidra.exceptions import GhidraError
+from re_mcp_ghidra.transforms import MANAGEMENT_TOOLS, PINNED_TOOLS
 
 # _MANAGEMENT_TOOLS was a module-level set in worker_provider — it's REMOVED.
 # Management tools now come from backend.info().management_tools.  For tests
@@ -69,8 +69,8 @@ _MANAGEMENT_TOOLS = MANAGEMENT_TOOLS - {"list_databases", "list_targets"}
 
 
 def _canonical_path(path: str, **kwargs: object) -> str:
-    """Test-local wrapper: delegates to _canonical_path_for(IDABackend, ...)."""
-    return _canonical_path_for(IDABackend, path, **kwargs)
+    """Test-local wrapper: delegates to _canonical_path_for(GhidraBackend, ...)."""
+    return _canonical_path_for(GhidraBackend, path, **kwargs)
 
 
 # ---------------------------------------------------------------------------
@@ -109,19 +109,25 @@ class _FakeCtx:
 
 
 def test_prefix_uri_basic():
-    assert prefix_uri("ida://idb/metadata", "mybin", "ida") == "ida://mybin/idb/metadata"
+    assert prefix_uri("ghidra://db/metadata", "mybin", "ghidra") == "ghidra://mybin/db/metadata"
 
 
 def test_prefix_uri_nested_path():
-    assert prefix_uri("ida://functions/0x401000", "db1", "ida") == "ida://db1/functions/0x401000"
+    assert (
+        prefix_uri("ghidra://functions/0x401000", "db1", "ghidra")
+        == "ghidra://db1/functions/0x401000"
+    )
 
 
-def test_prefix_uri_non_ida_scheme():
-    assert prefix_uri("https://example.com", "mybin", "ida") == "https://example.com"
+def test_prefix_uri_foreign_scheme():
+    assert prefix_uri("https://example.com", "mybin", "ghidra") == "https://example.com"
 
 
 def test_prefix_uri_template_placeholder():
-    assert prefix_uri("ida://types/{name}", "{database}", "ida") == "ida://{database}/types/{name}"
+    assert (
+        prefix_uri("ghidra://types/{name}", "{database}", "ghidra")
+        == "ghidra://{database}/types/{name}"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -130,43 +136,43 @@ def test_prefix_uri_template_placeholder():
 
 
 def test_extract_db_prefix_basic():
-    db, worker_uri = extract_db_prefix("ida://mybin/idb/metadata", "ida")
+    db, worker_uri = extract_db_prefix("ghidra://mybin/db/metadata", "ghidra")
     assert db == "mybin"
-    assert worker_uri == "ida://idb/metadata"
+    assert worker_uri == "ghidra://db/metadata"
 
 
 def test_extract_db_prefix_nested():
-    db, worker_uri = extract_db_prefix("ida://db1/functions/0x401000", "ida")
+    db, worker_uri = extract_db_prefix("ghidra://db1/functions/0x401000", "ghidra")
     assert db == "db1"
-    assert worker_uri == "ida://functions/0x401000"
+    assert worker_uri == "ghidra://functions/0x401000"
 
 
-def test_extract_db_prefix_non_ida_scheme():
-    db, uri = extract_db_prefix("https://example.com/path", "ida")
+def test_extract_db_prefix_foreign_scheme():
+    db, uri = extract_db_prefix("https://example.com/path", "ghidra")
     assert db is None
     assert uri == "https://example.com/path"
 
 
 def test_extract_db_prefix_no_path_segment():
-    """URI like ``ida://databases`` has no slash after the first segment."""
-    db, uri = extract_db_prefix("ida://databases", "ida")
+    """URI like ``ghidra://databases`` has no slash after the first segment."""
+    db, uri = extract_db_prefix("ghidra://databases", "ghidra")
     assert db is None
-    assert uri == "ida://databases"
+    assert uri == "ghidra://databases"
 
 
 def test_extract_db_prefix_empty_segment():
-    """URI like ``ida:///path`` has an empty segment before the slash."""
-    db, uri = extract_db_prefix("ida:///path", "ida")
+    """URI like ``ghidra:///path`` has an empty segment before the slash."""
+    db, uri = extract_db_prefix("ghidra:///path", "ghidra")
     assert db is None
-    assert uri == "ida:///path"
+    assert uri == "ghidra:///path"
 
 
 def test_extract_roundtrip():
-    """prefix_uri and extract_db_prefix are inverses for ida:// URIs."""
-    original = "ida://idb/segments"
+    """prefix_uri and extract_db_prefix are inverses for ghidra:// URIs."""
+    original = "ghidra://db/segments"
     db_id = "testdb"
-    prefixed = prefix_uri(original, db_id, "ida")
-    extracted_db, extracted_uri = extract_db_prefix(prefixed, "ida")
+    prefixed = prefix_uri(original, db_id, "ghidra")
+    extracted_db, extracted_uri = extract_db_prefix(prefixed, "ghidra")
     assert extracted_db == db_id
     assert extracted_uri == original
 
@@ -178,41 +184,41 @@ def test_extract_roundtrip():
 
 def test_expand_uri_template_path_params():
     """Simple {key} path parameters are expanded."""
-    result = expand_uri_template("ida://functions/{addr}", {"addr": "0x1000"})
-    assert result == "ida://functions/0x1000"
+    result = expand_uri_template("ghidra://functions/{addr}", {"addr": "0x1000"})
+    assert result == "ghidra://functions/0x1000"
 
 
 def test_expand_uri_template_query_params():
     """RFC 6570 {?key1,key2} query parameters are expanded."""
-    result = expand_uri_template("ida://functions{?offset,limit}", {"offset": 0, "limit": 100})
-    assert result == "ida://functions?offset=0&limit=100"
+    result = expand_uri_template("ghidra://functions{?offset,limit}", {"offset": 0, "limit": 100})
+    assert result == "ghidra://functions?offset=0&limit=100"
 
 
 def test_expand_uri_template_query_params_partial():
     """Only provided query params appear in the result."""
-    result = expand_uri_template("ida://functions{?offset,limit}", {"limit": 50})
-    assert result == "ida://functions?limit=50"
+    result = expand_uri_template("ghidra://functions{?offset,limit}", {"limit": 50})
+    assert result == "ghidra://functions?limit=50"
 
 
 def test_expand_uri_template_query_params_empty():
     """No query params provided → no query string appended."""
-    result = expand_uri_template("ida://functions{?offset,limit}", {})
-    assert result == "ida://functions"
+    result = expand_uri_template("ghidra://functions{?offset,limit}", {})
+    assert result == "ghidra://functions"
 
 
 def test_expand_uri_template_mixed():
     """Path and query parameters together."""
     result = expand_uri_template(
-        "ida://idb/segments/search/{pattern}{?offset,limit}",
+        "ghidra://db/segments/search/{pattern}{?offset,limit}",
         {"pattern": "text", "offset": 0, "limit": 10},
     )
-    assert result == "ida://idb/segments/search/text?offset=0&limit=10"
+    assert result == "ghidra://db/segments/search/text?offset=0&limit=10"
 
 
 def test_expand_uri_template_no_params():
     """Template with no parameters returns unchanged."""
-    result = expand_uri_template("ida://idb/metadata", {})
-    assert result == "ida://idb/metadata"
+    result = expand_uri_template("ghidra://db/metadata", {})
+    assert result == "ghidra://db/metadata"
 
 
 # ---------------------------------------------------------------------------
@@ -228,13 +234,6 @@ def test_canonical_path_raw_binary(tmp_path):
     assert _canonical_path(str(raw)) == expected
 
 
-def test_canonical_path_idb_normalizes_extension(tmp_path):
-    """``.idb`` and ``.i64`` inputs both strip the extension."""
-    idb = tmp_path / "project.idb"
-    i64 = tmp_path / "project.i64"
-    assert _canonical_path(str(idb)) == _canonical_path(str(i64))
-
-
 def test_canonical_path_dedups_symlinks(tmp_path):
     """Two symlinks pointing at the same binary share a dedup key."""
     real = tmp_path / "real_binary"
@@ -246,33 +245,6 @@ def test_canonical_path_dedups_symlinks(tmp_path):
 
     assert _canonical_path(str(link_a)) == _canonical_path(str(link_b))
     assert _canonical_path(str(link_a)) == _canonical_path(str(real))
-
-
-def test_canonical_path_fat_arch_separates_slices(tmp_path):
-    """Different fat slices of the same binary get distinct keys so they
-    dedup to separate workers (and per-slice sidecar files on disk)."""
-    fat = tmp_path / "universal"
-    fat.write_bytes(b"\x00")
-    x86 = _canonical_path(str(fat), fat_arch="x86_64")
-    arm = _canonical_path(str(fat), fat_arch="arm64")
-    default = _canonical_path(str(fat))
-    assert x86 != arm
-    assert x86 != default
-    assert arm != default
-    assert x86.endswith(".x86_64")
-    assert arm.endswith(".arm64")
-
-
-def test_canonical_path_fat_arch_dedups_symlinked_slices(tmp_path):
-    """The slice suffix is appended after realpath resolution, so two
-    symlinks plus the same ``fat_arch`` still collapse to one key."""
-    real = tmp_path / "universal_real"
-    real.write_bytes(b"\x00")
-    link = tmp_path / "universal_link"
-    link.symlink_to(real)
-    assert _canonical_path(str(link), fat_arch="arm64") == _canonical_path(
-        str(real), fat_arch="arm64"
-    )
 
 
 # ---------------------------------------------------------------------------
@@ -336,7 +308,7 @@ def _setup_pool(
     resource_templates: list[FastMCPResourceTemplate] | None = None,
 ) -> WorkerPoolProvider:
     """Create a WorkerPoolProvider with pre-populated schemas (skipping bootstrap)."""
-    pool = WorkerPoolProvider(backend=IDABackend)
+    pool = WorkerPoolProvider(backend=GhidraBackend)
     all_tools = [_SENTINEL_TOOL, *tools]
     pool._bootstrapped = True
 
@@ -411,12 +383,12 @@ class TestToolVisibility:
             tools=[],
             resource_templates=[
                 _make_resource_template(
-                    "ida://{database}/functions/{addr}/vars",
+                    "ghidra://{database}/functions/{addr}/vars",
                     "function_vars",
                     tags={"decompiler"},
                 ),
                 _make_resource_template(
-                    "ida://{database}/functions/{addr}",
+                    "ghidra://{database}/functions/{addr}",
                     "function_detail",
                 ),
             ],
@@ -1942,7 +1914,7 @@ class TestFixupEnrichConsistency:
 
 
 class TestHasProcessingLogic:
-    """Pure function — no IDA context needed."""
+    """Pure function — no backend context needed."""
 
     def test_for_loop(self):
         assert _has_processing_logic("for x in items:\n    pass") is True
@@ -2107,7 +2079,7 @@ class TestSearchTools:
         assert "capped at 5" in result
 
     @pytest.mark.asyncio
-    async def test_invalid_regex_raises_ida_error(self):
+    async def test_invalid_regex_raises_backend_error(self):
         transform = _make_transform_with_catalog([])
         fn = transform._get_search_tool().fn
         with pytest.raises(BackendError, match="Invalid regex pattern"):
@@ -2780,7 +2752,7 @@ class TestBatchMetaTool:
         """Partial failures raise BatchFailed with per-item results in payload."""
         ctx = self._make_ctx(
             results=[
-                IDAError("bad address"),
+                GhidraError("bad address"),
                 {"ok": True},
             ]
         )
@@ -2807,7 +2779,7 @@ class TestBatchMetaTool:
         """stop_on_error=True stops after first failure and raises BatchFailed."""
         ctx = self._make_ctx(
             results=[
-                IDAError("fail"),
+                GhidraError("fail"),
                 {"ok": True},
             ]
         )
@@ -3144,11 +3116,11 @@ class TestMetaToolDisableFlags:
 
 
 class TestBuildInstructions:
-    """IDABackend.build_instructions reflects transform feature flags."""
+    """GhidraBackend.build_instructions reflects transform feature flags."""
 
     def test_default_includes_all_sections(self):
         transform = ToolTransform(pinned=PINNED_TOOLS)
-        text = IDABackend.build_instructions(transform)
+        text = GhidraBackend.build_instructions(transform)
         assert "## Tool discovery" in text
         assert "## Call patterns" in text
         assert "**batch**" in text
@@ -3156,19 +3128,19 @@ class TestBuildInstructions:
 
     def test_batch_disabled_omits_batch_from_call_patterns(self):
         transform = ToolTransform(pinned=PINNED_TOOLS, enable_batch=False)
-        text = IDABackend.build_instructions(transform)
+        text = GhidraBackend.build_instructions(transform)
         assert "**batch**" not in text
         assert "**execute**" in text
 
     def test_execute_disabled_omits_execute_from_call_patterns(self):
         transform = ToolTransform(pinned=PINNED_TOOLS, enable_execute=False)
-        text = IDABackend.build_instructions(transform)
+        text = GhidraBackend.build_instructions(transform)
         assert "execute" not in text
         assert "**batch**" in text
 
     def test_tool_search_disabled_omits_discovery_section(self):
         transform = ToolTransform(pinned=PINNED_TOOLS, enable_tool_search=False)
-        text = IDABackend.build_instructions(transform)
+        text = GhidraBackend.build_instructions(transform)
         assert "## Tool discovery" not in text
         assert "pinned" not in text
         assert "hidden" not in text
@@ -3176,7 +3148,7 @@ class TestBuildInstructions:
 
     def test_tool_search_enabled_includes_discovery(self):
         transform = ToolTransform(pinned=PINNED_TOOLS, enable_tool_search=True)
-        text = IDABackend.build_instructions(transform)
+        text = GhidraBackend.build_instructions(transform)
         assert "## Tool discovery" in text
         assert "search_tools" in text
         assert "get_schema" in text
@@ -3189,7 +3161,7 @@ class TestBuildInstructions:
             enable_execute=False,
             enable_tool_search=False,
         )
-        text = IDABackend.build_instructions(transform)
+        text = GhidraBackend.build_instructions(transform)
         assert "## Tool discovery" not in text
         assert "batch" not in text
         assert "execute" not in text
@@ -3197,7 +3169,7 @@ class TestBuildInstructions:
 
     def test_tool_discovery_callable_via_reflects_flags(self):
         transform = ToolTransform(pinned=PINNED_TOOLS, enable_batch=False)
-        text = IDABackend.build_instructions(transform)
+        text = GhidraBackend.build_instructions(transform)
         assert "## Tool discovery" in text
         assert "**call**" in text
         assert "**batch**" not in text
@@ -3276,7 +3248,7 @@ class TestSupervisorSaveDatabase:
 
     @staticmethod
     def _make_proxy():
-        mcp = ProxyMCP(backend=IDABackend, lifespan=None)
+        mcp = ProxyMCP(backend=GhidraBackend, lifespan=None)
         pool = mcp.worker_pool
         _add_worker(pool, "db1", {})
         save_result = _ok_result({"status": "saved", "path": "/tmp/db1"})

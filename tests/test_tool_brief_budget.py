@@ -19,8 +19,8 @@ near-neighbors (e.g. ``save_database`` vs. a hypothetical
 where it earns them disambiguation and forces a conversation when the
 catalog grows enough to threaten context.
 
-Parsing is done via ``ast`` so this test runs without idalib — it never
-imports any ``re_mcp_ida.tools.*`` module.
+Parsing is done via ``ast`` so this test runs without the Ghidra JVM — it
+never imports any ``re_mcp_ghidra.tools.*`` module.
 """
 
 from __future__ import annotations
@@ -33,15 +33,15 @@ import pytest
 TOOLS_DIR = (
     pathlib.Path(__file__).resolve().parent.parent
     / "packages"
-    / "re-mcp-ida"
+    / "re-mcp-ghidra"
     / "src"
-    / "re_mcp_ida"
+    / "re_mcp_ghidra"
     / "tools"
 )
 
 # Budget for the total first-line docstring characters across every tool.
-# Current baseline (188 tools) sits near 10.7k chars; this leaves ~50%
-# headroom for new tools and small wording growth before the test trips.
+# Current baseline (131 tools) sits near 6.7k chars; this leaves room for
+# new tools and small wording growth before the test trips.
 # When it does trip, the failure message lists the worst offenders so the
 # author can decide whether to tighten existing lines or expand the budget
 # alongside a deliberate review of the catalog size.

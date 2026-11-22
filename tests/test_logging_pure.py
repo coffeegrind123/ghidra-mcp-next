@@ -16,8 +16,6 @@ from re_mcp import _sanitize_label, ensure_run_id, resolve_log_file
 def _clear_env(monkeypatch):
     monkeypatch.delenv("RE_MCP_LOG_RUN", raising=False)
     monkeypatch.delenv("RE_MCP_LOG_DIR", raising=False)
-    monkeypatch.delenv("IDA_MCP_LOG_RUN", raising=False)
-    monkeypatch.delenv("IDA_MCP_LOG_DIR", raising=False)
 
 
 def test_resolve_log_file_unset_returns_none():

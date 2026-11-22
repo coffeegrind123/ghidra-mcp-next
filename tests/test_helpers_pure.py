@@ -2,11 +2,11 @@
 #
 # SPDX-License-Identifier: MIT OR Apache-2.0
 
-"""Unit tests for pure helper functions that don't require IDA.
+"""Unit tests for pure helper functions that don't require a backend engine.
 
-These tests cover is_bad_addr, format_address, paginate, paginate_iter,
-segment_bitness, compile_filter, parse_permissions, safe_type_size, and
-format_permissions — all functions that can run without idalib loaded.
+These tests cover format_address, paginate, paginate_iter, compile_filter,
+async_paginate_iter, and structured error serialization — all functions
+that can run without the Ghidra JVM.
 """
 
 from __future__ import annotations
@@ -16,38 +16,14 @@ import json
 import pytest
 from re_mcp.context import try_get_context
 from re_mcp.exceptions import BackendError
-from re_mcp_ida.helpers import (
-    IDAError,
+from re_mcp.helpers import (
     async_paginate_iter,
     compile_filter,
     format_address,
-    format_permissions,
-    is_bad_addr,
     paginate,
     paginate_iter,
-    parse_permissions,
-    safe_type_size,
-    segment_bitness,
 )
-
-# ---------------------------------------------------------------------------
-# is_bad_addr
-# ---------------------------------------------------------------------------
-
-
-def test_is_bad_addr_32():
-    assert is_bad_addr(0xFFFFFFFF) is True
-
-
-def test_is_bad_addr_64():
-    assert is_bad_addr(0xFFFFFFFFFFFFFFFF) is True
-
-
-def test_is_bad_addr_valid():
-    assert is_bad_addr(0) is False
-    assert is_bad_addr(0x401000) is False
-    assert is_bad_addr(1) is False
-
+from re_mcp_ghidra.exceptions import GhidraError
 
 # ---------------------------------------------------------------------------
 # format_address
@@ -174,21 +150,6 @@ def test_paginate_iter_matches_paginate():
 
 
 # ---------------------------------------------------------------------------
-# segment_bitness
-# ---------------------------------------------------------------------------
-
-
-def test_segment_bitness_known():
-    assert segment_bitness(0) == 16
-    assert segment_bitness(1) == 32
-    assert segment_bitness(2) == 64
-
-
-def test_segment_bitness_unknown():
-    assert segment_bitness(99) == 99
-
-
-# ---------------------------------------------------------------------------
 # compile_filter
 # ---------------------------------------------------------------------------
 
@@ -232,84 +193,26 @@ def test_paginate_iter_large_stops_counting():
 
 
 # ---------------------------------------------------------------------------
-# parse_permissions
+# GhidraError structured serialization
 # ---------------------------------------------------------------------------
 
 
-def test_parse_permissions_rwx():
-    perm = parse_permissions("RWX")
-    assert perm != 0
-
-
-def test_parse_permissions_dashes():
-    perm = parse_permissions("R-X")
-    assert perm != 0
-
-
-def test_parse_permissions_invalid_chars():
-    with pytest.raises(IDAError) as exc_info:
-        parse_permissions("RWZ")
-    assert exc_info.value.error_type == "InvalidArgument"
-
-
-def test_parse_permissions_empty():
-    with pytest.raises(IDAError) as exc_info:
-        parse_permissions("")
-    assert exc_info.value.error_type == "InvalidArgument"
-
-
-# ---------------------------------------------------------------------------
-# safe_type_size
-# ---------------------------------------------------------------------------
-
-
-def test_safe_type_size_normal():
-    assert safe_type_size(42) == 42
-    assert safe_type_size(0) == 0
-
-
-def test_safe_type_size_badaddr32():
-    assert safe_type_size(0xFFFFFFFF) is None
-
-
-def test_safe_type_size_badaddr64():
-    assert safe_type_size(0xFFFFFFFFFFFFFFFF) is None
-
-
-# ---------------------------------------------------------------------------
-# format_permissions
-# ---------------------------------------------------------------------------
-
-
-def test_format_permissions_all():
-    assert format_permissions(7) == "RWX"
-    assert format_permissions(5) == "R-X"
-    assert format_permissions(4) == "R--"
-    assert format_permissions(0) == "---"
-    assert format_permissions(6) == "RW-"
-
-
-# ---------------------------------------------------------------------------
-# IDAError structured serialization
-# ---------------------------------------------------------------------------
-
-
-def test_ida_error_str_is_json():
-    err = IDAError("something failed", error_type="NotFound")
+def test_ghidra_error_str_is_json():
+    err = GhidraError("something failed", error_type="NotFound")
     parsed = json.loads(str(err))
     assert parsed == {"error": "something failed", "error_type": "NotFound"}
 
 
-def test_ida_error_str_with_details():
-    err = IDAError("bad value", error_type="InvalidArgument", valid_values=["a", "b"])
+def test_ghidra_error_str_with_details():
+    err = GhidraError("bad value", error_type="InvalidArgument", valid_values=["a", "b"])
     parsed = json.loads(str(err))
     assert parsed["error"] == "bad value"
     assert parsed["error_type"] == "InvalidArgument"
     assert parsed["valid_values"] == ["a", "b"]
 
 
-def test_ida_error_str_no_details():
-    err = IDAError("oops")
+def test_ghidra_error_str_no_details():
+    err = GhidraError("oops")
     parsed = json.loads(str(err))
     assert parsed == {"error": "oops", "error_type": "Error"}
     assert len(parsed) == 2  # no extra keys

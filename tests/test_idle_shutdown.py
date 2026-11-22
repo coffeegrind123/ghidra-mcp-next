@@ -24,7 +24,7 @@ from re_mcp.daemon import (
 from re_mcp.proxy import _spawn_daemon
 from re_mcp.supervisor import main
 from re_mcp.worker_provider import Worker, WorkerPoolProvider, WorkerState
-from re_mcp_ida.backend import IDABackend
+from re_mcp_ghidra.backend import GhidraBackend
 
 # ---------------------------------------------------------------------------
 # ProxyTracker
@@ -363,23 +363,23 @@ class TestIdleMonitor:
 class TestWorkerPoolProviderIdleMethods:
     @pytest.mark.asyncio
     async def test_active_session_count_empty(self):
-        pool = WorkerPoolProvider(backend=IDABackend)
+        pool = WorkerPoolProvider(backend=GhidraBackend)
         assert await pool.active_session_count() == 0
 
     @pytest.mark.asyncio
     async def test_active_session_count_with_sessions(self):
-        pool = WorkerPoolProvider(backend=IDABackend)
+        pool = WorkerPoolProvider(backend=GhidraBackend)
         pool._registered_sessions.update(["s1", "s2", "s3"])
         assert await pool.active_session_count() == 3
 
     @pytest.mark.asyncio
     async def test_has_active_work_empty(self):
-        pool = WorkerPoolProvider(backend=IDABackend)
+        pool = WorkerPoolProvider(backend=GhidraBackend)
         assert await pool.has_active_work() is False
 
     @pytest.mark.asyncio
     async def test_has_active_work_with_busy_worker(self):
-        pool = WorkerPoolProvider(backend=IDABackend)
+        pool = WorkerPoolProvider(backend=GhidraBackend)
         w = Worker(database_id="test", file_path="/tmp/test.i64")
         w.state = WorkerState.IDLE
         w._active_calls = 1
@@ -388,14 +388,14 @@ class TestWorkerPoolProviderIdleMethods:
 
     @pytest.mark.asyncio
     async def test_has_active_work_with_opening_worker(self):
-        pool = WorkerPoolProvider(backend=IDABackend)
+        pool = WorkerPoolProvider(backend=GhidraBackend)
         w = Worker(database_id="test", file_path="/tmp/test.i64")
         pool._workers["/tmp/test.i64"] = w
         assert await pool.has_active_work() is True
 
     @pytest.mark.asyncio
     async def test_has_active_work_with_analyzing_worker(self):
-        pool = WorkerPoolProvider(backend=IDABackend)
+        pool = WorkerPoolProvider(backend=GhidraBackend)
         w = Worker(database_id="test", file_path="/tmp/test.i64")
         w.state = WorkerState.IDLE
         w._ready_event.set()
@@ -418,11 +418,11 @@ class TestIdleTimeoutValidation:
     def test_argparse_rejects_negative(self):
         with (
             pytest.raises(SystemExit),
-            patch.object(sys, "argv", ["re-mcp-ida", "serve", "--idle-timeout", "-1"]),
+            patch.object(sys, "argv", ["re-mcp-ghidra", "serve", "--idle-timeout", "-1"]),
         ):
             main()
 
     def test_proxy_rejects_negative_env(self, monkeypatch):
-        monkeypatch.setenv("IDA_MCP_IDLE_TIMEOUT", "-5")
+        monkeypatch.setenv("GHIDRA_MCP_IDLE_TIMEOUT", "-5")
         with pytest.raises(SystemExit):
-            _spawn_daemon(IDABackend)
+            _spawn_daemon(GhidraBackend)

@@ -28,7 +28,7 @@ from re_mcp.proxy import (
     _wait_for_exit,
     stop,
 )
-from re_mcp_ida.backend import IDABackend
+from re_mcp_ghidra.backend import GhidraBackend
 
 # ---------------------------------------------------------------------------
 # Lock path
@@ -172,7 +172,7 @@ class TestEnsureDaemon:
             patch("re_mcp.proxy.daemon_alive", return_value=True),
             patch("re_mcp.proxy._version_ok", return_value=True),
         ):
-            result = _ensure_daemon(IDABackend)
+            result = _ensure_daemon(GhidraBackend)
         assert result is state
 
     def test_spawns_when_no_state(self, tmp_path, monkeypatch):
@@ -185,7 +185,7 @@ class TestEnsureDaemon:
             patch("re_mcp.proxy.read_state", return_value=None),
             patch("re_mcp.proxy._spawn_daemon", return_value=new_state) as mock_spawn,
         ):
-            result = _ensure_daemon(IDABackend)
+            result = _ensure_daemon(GhidraBackend)
         assert result is new_state
         mock_spawn.assert_called_once()
 
@@ -212,7 +212,7 @@ class TestEnsureDaemon:
             patch("re_mcp.proxy.remove_state") as mock_remove,
             patch("re_mcp.proxy._spawn_daemon", return_value=new_state),
         ):
-            result = _ensure_daemon(IDABackend)
+            result = _ensure_daemon(GhidraBackend)
         assert result is new_state
         mock_remove.assert_called_once()
 
@@ -239,7 +239,7 @@ class TestEnsureDaemon:
             patch("re_mcp.proxy._version_ok", return_value=True),
             patch("re_mcp.proxy._spawn_daemon") as mock_spawn,
         ):
-            result = _ensure_daemon(IDABackend)
+            result = _ensure_daemon(GhidraBackend)
         assert result is state
         mock_spawn.assert_not_called()
 
@@ -272,7 +272,7 @@ class TestEnsureDaemon:
             patch("re_mcp.proxy.remove_state") as mock_remove,
             patch("re_mcp.proxy._spawn_daemon", return_value=new_state) as mock_spawn,
         ):
-            result = _ensure_daemon(IDABackend)
+            result = _ensure_daemon(GhidraBackend)
         assert result is new_state
         mock_stop.assert_called_once_with(old_state)
         mock_remove.assert_called_once()
@@ -295,7 +295,7 @@ class TestSpawnDaemon:
             patch("re_mcp.proxy.read_state", return_value=None),
             pytest.raises(RuntimeError, match="exited immediately with code 1"),
         ):
-            _spawn_daemon(IDABackend)
+            _spawn_daemon(GhidraBackend)
 
     def test_success(self, monkeypatch):
         mock_proc = MagicMock()
@@ -315,7 +315,7 @@ class TestSpawnDaemon:
             patch("re_mcp.proxy.daemon_alive", return_value=True),
             patch("time.sleep"),
         ):
-            result = _spawn_daemon(IDABackend)
+            result = _spawn_daemon(GhidraBackend)
         assert result is state
 
     def test_timeout_raises(self, monkeypatch):
@@ -329,7 +329,7 @@ class TestSpawnDaemon:
             patch("re_mcp.proxy.read_state", return_value=None),
             pytest.raises(RuntimeError, match="failed to start"),
         ):
-            _spawn_daemon(IDABackend)
+            _spawn_daemon(GhidraBackend)
 
     def test_stderr_captured_to_log_file(self, tmp_path, monkeypatch):
         stderr_path = str(tmp_path / "daemon-spawn.stderr")
@@ -342,7 +342,7 @@ class TestSpawnDaemon:
             patch("re_mcp.proxy.read_state", return_value=None),
             pytest.raises(RuntimeError, match=stderr_path),
         ):
-            _spawn_daemon(IDABackend)
+            _spawn_daemon(GhidraBackend)
 
     def test_windows_shim_exits_but_daemon_starts(self, monkeypatch):
         """On Windows the launcher/shim may exit immediately while the real
@@ -367,7 +367,7 @@ class TestSpawnDaemon:
             patch("re_mcp.proxy.daemon_alive", return_value=True),
             patch("time.sleep"),
         ):
-            result = _spawn_daemon(IDABackend)
+            result = _spawn_daemon(GhidraBackend)
         assert result is state
 
     def test_windows_shim_timeout_includes_exit_code(self, monkeypatch):
@@ -397,7 +397,7 @@ class TestSpawnDaemon:
             patch("time.monotonic", side_effect=fake_monotonic),
             pytest.raises(RuntimeError, match=r"launcher exited with code 7"),
         ):
-            _spawn_daemon(IDABackend)
+            _spawn_daemon(GhidraBackend)
 
 
 # ---------------------------------------------------------------------------
@@ -408,7 +408,7 @@ class TestSpawnDaemon:
 class TestStop:
     def test_no_state_returns_false(self):
         with patch("re_mcp.proxy.read_state", return_value=None):
-            assert stop(IDABackend) is False
+            assert stop(GhidraBackend) is False
 
     def test_stale_state_cleans_up(self):
         state = {"pid": 999999999, "host": "127.0.0.1", "port": 8080, "token": "t", "version": "v"}
@@ -417,7 +417,7 @@ class TestStop:
             patch("re_mcp.proxy.daemon_alive", return_value=False),
             patch("re_mcp.proxy.remove_state") as mock_remove,
         ):
-            assert stop(IDABackend) is False
+            assert stop(GhidraBackend) is False
         mock_remove.assert_called_once()
 
     def test_running_daemon_stopped(self):
@@ -428,6 +428,6 @@ class TestStop:
             patch("re_mcp.proxy._stop_daemon") as mock_stop,
             patch("re_mcp.proxy.remove_state") as mock_remove,
         ):
-            assert stop(IDABackend) is True
+            assert stop(GhidraBackend) is True
         mock_stop.assert_called_once_with(state)
         mock_remove.assert_called_once()

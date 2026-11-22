@@ -62,12 +62,11 @@ log = logging.getLogger(__name__)
 def _resolve_max_workers(env_prefix: str = "RE_MCP_") -> int | None:
     """Read the max-workers cap from the environment.
 
-    Checks ``{env_prefix}MAX_WORKERS`` first, then falls back to
-    ``IDA_MCP_MAX_WORKERS`` for backward compatibility.  Returns
-    ``None`` (unlimited) when neither is set.  Valid range: [1, 8].
+    Reads ``{env_prefix}MAX_WORKERS``.  Returns ``None`` (unlimited)
+    when it is unset.  Valid range: [1, 8].
     Non-integer values are logged and ignored.
     """
-    raw = os.environ.get(f"{env_prefix}MAX_WORKERS") or os.environ.get("IDA_MCP_MAX_WORKERS")
+    raw = os.environ.get(f"{env_prefix}MAX_WORKERS")
     if not raw:
         return None
     try:

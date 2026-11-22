@@ -1,44 +1,41 @@
 # RE-MCP
 
-A multi-backend reverse-engineering [MCP](https://modelcontextprotocol.io/) server. Exposes binary analysis capabilities from [IDA Pro](https://hex-rays.com/ida-pro/) and [Ghidra](https://ghidra-sre.org/) over the Model Context Protocol, letting LLMs drive reverse-engineering tools directly. Supports multiple simultaneous databases through a supervisor/worker architecture.
+A reverse-engineering [MCP](https://modelcontextprotocol.io/) server for [Ghidra](https://ghidra-sre.org/). Exposes Ghidra's binary analysis capabilities over the Model Context Protocol, letting LLMs drive reverse engineering directly. Supports multiple simultaneous databases through a supervisor/worker architecture.
 
-Both backends are standalone servers, not plugins. They use headless APIs ([idalib](https://docs.hex-rays.com/release-notes/9_0#idalib-ida-as-a-library) for IDA, [pyghidra](https://github.com/NationalSecurityAgency/ghidra/tree/master/Ghidra/Features/PyGhidra) for Ghidra) to run analysis engines without a GUI.
+The server is standalone, not a plugin. It uses [pyghidra](https://github.com/NationalSecurityAgency/ghidra/tree/master/Ghidra/Features/PyGhidra) to run Ghidra's analysis engine headless, without a GUI.
 
 ## Backends
 
 | Backend | Package | Requirements |
 |---------|---------|--------------|
-| **IDA Pro** | [`re-mcp-ida`](packages/re-mcp-ida/) | IDA Pro 9+ with a valid license |
 | **Ghidra** | [`re-mcp-ghidra`](packages/re-mcp-ghidra/) | Ghidra 12+, JDK 21+ |
 
-Both backends share a common tool interface — core analysis tools use the same names, parameters, and response shapes — so LLM workflows are portable across backends. Each backend also has tools for platform-specific features (e.g. IDA: file region mapping, executable rebuilding, IDC evaluation, IDAPython scripting; Ghidra: Function ID analysis, data type archives).
+Besides the core analysis tools, the backend has tools for Ghidra-specific features such as Function ID analysis and data type archives.
 
 ## Requirements
 
 - Python 3.12+
 - [uv](https://docs.astral.sh/uv/) package manager (recommended) or pip
 - macOS, Windows, or Linux
-- At least one supported backend installed on the same machine
+- Ghidra installed on the same machine
 
 ## Installation
 
-Install individual backend packages directly, or install `re-mcp` and select a backend with `--backend`:
+Install the backend package directly, or install `re-mcp` and select the backend with `--backend`:
 
 ```bash
-# Individual backend packages (each provides its own CLI)
-uv tool install re-mcp-ida
+# Backend package (provides its own CLI)
 uv tool install re-mcp-ghidra
 
 # Or install the core package and use --backend to select
-uv tool install re-mcp --with re-mcp-ida --with re-mcp-ghidra
+uv tool install re-mcp --with re-mcp-ghidra
 ```
 
 With pip:
 
 ```bash
-pip install re-mcp-ida        # IDA only
-pip install re-mcp-ghidra     # Ghidra only
-pip install re-mcp re-mcp-ida re-mcp-ghidra  # Unified CLI with both backends
+pip install re-mcp-ghidra             # Backend CLI
+pip install re-mcp re-mcp-ghidra      # Unified CLI
 ```
 
 ### From source
@@ -52,24 +49,8 @@ Or with pip:
 
 ```bash
 git clone https://github.com/jtsylve/ida-mcp && cd ida-mcp
-pip install -e packages/re-mcp-core -e packages/re-mcp-ida -e packages/re-mcp-ghidra
+pip install -e packages/re-mcp-core -e packages/re-mcp-ghidra
 ```
-
-### Finding IDA Pro
-
-The IDA backend looks for your IDA Pro installation in the following order:
-
-1. **`IDADIR` environment variable** — checked first; set this if IDA is in a non-standard location.
-2. **IDA's own config file** — `Paths.ida-install-dir` in `~/.idapro/ida-config.json` (macOS/Linux) or `%APPDATA%\Hex-Rays\IDA Pro\ida-config.json` (Windows). If the `IDAUSR` environment variable is set, it is used as the config directory instead.
-3. **Platform-specific default paths:**
-
-| Platform | Default search paths |
-|----------|---------------------|
-| macOS    | `/Applications/IDA Professional *.app/Contents/MacOS` |
-| Windows  | `C:\Program Files\IDA Professional 9.3`, `C:\Program Files\IDA Pro 9.3`, and `Program Files (x86)` equivalents |
-| Linux    | `/opt/ida-pro-9.3`, `/opt/idapro-9.3`, `/opt/ida-9.3`, `~/ida-pro-9.3`, `~/idapro-9.3` |
-
-The `idapro` package is loaded at runtime directly from your local IDA Pro installation — no extra setup steps or environment variables are needed if IDA is installed in a standard location.
 
 ### Finding Ghidra
 
@@ -89,15 +70,13 @@ The Ghidra backend looks for your Ghidra installation in the following order:
 
 ### Running the server
 
-Each backend has its own CLI, or use the unified `re-mcp` command with `--backend`:
+The backend has its own CLI, or use the unified `re-mcp` command with `--backend`:
 
 ```bash
-# Individual backend CLIs
-uvx re-mcp-ida
+# Backend CLI
 uvx re-mcp-ghidra
 
 # Unified CLI (requires backend package installed alongside)
-uvx --with re-mcp-ida re-mcp --backend ida
 uvx --with re-mcp-ghidra re-mcp --backend ghidra
 ```
 
@@ -118,47 +97,26 @@ For persistent state across reconnections, use `<backend> proxy`. This mode auto
 ### Running without installing
 
 ```bash
-# Individual backend packages
-IDADIR=/path/to/ida uvx re-mcp-ida
+# Backend package
 GHIDRA_INSTALL_DIR=/path/to/ghidra uvx re-mcp-ghidra
 
 # Unified package
-IDADIR=/path/to/ida uvx --with re-mcp-ida re-mcp --backend ida
 GHIDRA_INSTALL_DIR=/path/to/ghidra uvx --with re-mcp-ghidra re-mcp --backend ghidra
 ```
 
 ```powershell
-# Individual backend packages
-$env:IDADIR = "C:\Program Files\IDA Professional 9.3"
-uvx re-mcp-ida
-
+# Backend package
 $env:GHIDRA_INSTALL_DIR = "C:\ghidra_12.0.3_PUBLIC"
 uvx re-mcp-ghidra
 
 # Unified package
-$env:IDADIR = "C:\Program Files\IDA Professional 9.3"
-uvx --with re-mcp-ida re-mcp --backend ida
+uvx --with re-mcp-ghidra re-mcp --backend ghidra
 ```
 
 ### MCP client configuration
 
 Add to your MCP client config (e.g. Claude Desktop `claude_desktop_config.json`):
 
-**IDA backend:**
-
-```json
-{
-  "mcpServers": {
-    "ida": {
-      "command": "uvx",
-      "args": ["re-mcp-ida"]
-    }
-  }
-}
-```
-
-**Ghidra backend:**
-
 ```json
 {
   "mcpServers": {
@@ -170,31 +128,14 @@ Add to your MCP client config (e.g. Claude Desktop `claude_desktop_config.json`)
 }
 ```
 
-**Both backends simultaneously:**
+**Using the unified `re-mcp` CLI (when installed via `uv tool install re-mcp --with re-mcp-ghidra`):**
 
 ```json
 {
   "mcpServers": {
-    "ida": {
-      "command": "uvx",
-      "args": ["re-mcp-ida"]
-    },
     "ghidra": {
-      "command": "uvx",
-      "args": ["re-mcp-ghidra"]
-    }
-  }
-}
-```
-
-**Using the unified `re-mcp` CLI (when installed via `uv tool install re-mcp --with re-mcp-ida`):**
-
-```json
-{
-  "mcpServers": {
-    "ida": {
       "command": "re-mcp",
-      "args": ["--backend", "ida"]
+      "args": ["--backend", "ghidra"]
     }
   }
 }
@@ -205,8 +146,8 @@ If the backend command is installed on your `PATH` (e.g. via `pip install`), use
 ```json
 {
   "mcpServers": {
-    "ida": {
-      "command": "re-mcp-ida"
+    "ghidra": {
+      "command": "re-mcp-ghidra"
     }
   }
 }
@@ -217,25 +158,18 @@ If the command isn't on your `PATH`, use the full path to the executable:
 ```json
 {
   "mcpServers": {
-    "ida": {
-      "command": "/home/user/.pyenv/versions/<version>/bin/re-mcp-ida"
+    "ghidra": {
+      "command": "/home/user/.pyenv/versions/<version>/bin/re-mcp-ghidra"
     }
   }
 }
 ```
 
-If the backend (IDA or Ghidra) isn't in a default location, add the install directory via the `env` key:
+If Ghidra isn't in a default location, add the install directory via the `env` key:
 
 ```json
 {
   "mcpServers": {
-    "ida": {
-      "command": "uvx",
-      "args": ["re-mcp-ida"],
-      "env": {
-        "IDADIR": "/path/to/ida"
-      }
-    },
     "ghidra": {
       "command": "uvx",
       "args": ["re-mcp-ghidra"],
@@ -256,12 +190,12 @@ State file locations:
 - **Linux:** `$XDG_STATE_HOME/<backend>/daemon.json` (defaults to `~/.local/state/<backend>/daemon.json`)
 - **Windows:** `%LOCALAPPDATA%\<backend>\daemon.json`
 
-Where `<backend>` is `re-mcp-ida` or `re-mcp-ghidra`.
+Where `<backend>` is `re-mcp-ghidra`.
 
 ```json
 {
   "mcpServers": {
-    "ida": {
+    "ghidra": {
       "type": "streamable-http",
       "url": "http://127.0.0.1:<port>/mcp",
       "headers": {
@@ -278,7 +212,7 @@ Where `<backend>` is `re-mcp-ida` or `re-mcp-ghidra`.
 2. **Analyze** — use the available tools (list functions, decompile, search strings, read bytes, etc.)
 3. **Close** — call `close_database` when done (auto-saves by default)
 
-Raw binaries must be in a writable directory since both backends create database files alongside them. When opening an existing database, the original binary does not need to be present.
+Raw binaries must be in a writable directory since Ghidra creates project files alongside them. When opening an existing database, the original binary does not need to be present.
 
 ### Multi-database mode
 
@@ -295,16 +229,15 @@ close_database(database="second")                       # closes second
 
 ### Environment variables
 
-Each backend uses its own environment variable prefix (`IDA_MCP_` or `GHIDRA_MCP_`). The table below uses `<PREFIX>` as a placeholder.
+Settings use the `GHIDRA_MCP_` environment variable prefix. The table below uses `<PREFIX>` as a placeholder.
 
 **Backend installation:**
 
 | Variable | Backend | Default | Description |
 |----------|---------|---------|-------------|
-| `IDADIR` | IDA | *(auto-detected)* | Path to IDA Pro installation directory |
 | `GHIDRA_INSTALL_DIR` | Ghidra | *(auto-detected)* | Path to Ghidra installation directory |
 
-**Shared settings** (replace `<PREFIX>` with `IDA_MCP_` or `GHIDRA_MCP_`):
+**Shared settings** (replace `<PREFIX>` with `GHIDRA_MCP_`):
 
 | Variable | Default | Description |
 |----------|---------|-------------|
@@ -315,12 +248,6 @@ Each backend uses its own environment variable prefix (`IDA_MCP_` or `GHIDRA_MCP
 | `<PREFIX>DISABLE_EXECUTE` | *(unset)* | Set to `1`, `true`, `yes`, or `on` to hide the `execute` meta-tool (sandboxed Python code mode) |
 | `<PREFIX>DISABLE_BATCH` | *(unset)* | Set to `1`, `true`, `yes`, or `on` to hide the `batch` meta-tool |
 | `<PREFIX>DISABLE_TOOL_SEARCH` | *(unset)* | Set to `1`, `true`, `yes`, or `on` to disable server-side progressive tool disclosure — all tools become directly visible and callable, and the `search_tools` and `get_schema` meta-tools are removed. Useful with clients that provide their own tool deferral (e.g. Claude Code). |
-
-**IDA-only settings:**
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `IDA_MCP_ALLOW_SCRIPTS` | *(unset)* | Set to `1`, `true`, or `yes` to enable the `run_script` tool for arbitrary IDAPython execution |
 
 ## Tools
 
@@ -356,7 +283,7 @@ The full tool catalog spans these areas:
 - **Address Metadata** — source line numbers, analysis flags, library item marking
 - **Register Tracking** — register and stack pointer value tracking
 - **Register Variables** — register-to-name mappings within functions
-- **Signatures** — FLIRT signatures/type libraries (IDA), Function ID/data type archives (Ghidra)
+- **Signatures** — Function ID and data type archives
 - **Export** — batch decompilation/disassembly, output file generation
 - **Snapshots** — take, list, and restore database snapshots
 - **Processor** — architecture info, register names, instruction classification
@@ -378,27 +305,13 @@ The server exposes [MCP resources](https://modelcontextprotocol.io/docs/concepts
 - **Aggregate snapshot** — statistics (function/segment/entry point/string/name counts, code coverage)
 - **Supervisor** — `<scheme>://databases` lists all open databases with worker state
 
-The URI scheme is `ida://` for the IDA backend and `ghidra://` for the Ghidra backend.
-
-## Prompts
-
-The server provides [MCP prompts](https://modelcontextprotocol.io/docs/concepts/prompts) — guided workflow templates that instruct the LLM to use tools in a structured sequence. Prompts are currently available for the IDA backend only.
-
-- **`survey_binary`** — binary triage producing an executive summary
-- **`analyze_function`** — full single-function analysis with decompilation, data flow, and behavior summary
-- **`diff_before_after`** — preview the effect of renaming/retyping on decompiler output
-- **`classify_functions`** — categorize functions by behavioral pattern
-- **`find_crypto_constants`** — scan for known cryptographic constants
-- **`auto_rename_strings`** — suggest function renames based on string references
-- **`apply_abi`** — apply known ABI type information to identified functions
-- **`export_idc_script`** — generate a script that reproduces user annotations
+The URI scheme is `ghidra://`.
 
 ## Architecture
 
-The project is a monorepo with three packages:
+The project is a monorepo with two packages:
 
 - [`re-mcp-core`](packages/re-mcp-core/) — shared supervisor infrastructure, transport, and common utilities
-- [`re-mcp-ida`](packages/re-mcp-ida/) — IDA Pro backend
 - [`re-mcp-ghidra`](packages/re-mcp-ghidra/) — Ghidra backend
 
 See [docs/architecture.md](docs/architecture.md) for detailed architecture documentation.
@@ -413,14 +326,14 @@ uv run ruff format packages/         # Format
 uv run ruff check --fix packages/    # Lint with auto-fix
 
 # With pip
-pip install -e packages/re-mcp-core -e packages/re-mcp-ida -e packages/re-mcp-ghidra
+pip install -e packages/re-mcp-core -e packages/re-mcp-ghidra
 pip install pre-commit pytest pytest-asyncio ruff jsonschema
 ruff check packages/
 ruff format packages/
 ruff check --fix packages/
 ```
 
-Pre-commit hooks run REUSE compliance checks, ruff lint (with `--fix --exit-non-zero-on-fix`), ruff format, idalib threading lint, and pytest on every commit.
+Pre-commit hooks run REUSE compliance checks, ruff lint (with `--fix --exit-non-zero-on-fix`), ruff format, and pytest on every commit.
 
 ## License
 
@@ -432,4 +345,4 @@ This project is [REUSE compliant](https://reuse.software/).
 
 ---
 
-*IDA Pro and Hex-Rays are trademarks of Hex-Rays SA. Ghidra is developed by the NSA. RE-MCP is an independent project and is not affiliated with or endorsed by Hex-Rays or the NSA.*
+*Ghidra is developed by the NSA. RE-MCP is an independent project and is not affiliated with or endorsed by the NSA.*
