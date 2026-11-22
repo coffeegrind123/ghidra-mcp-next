@@ -63,6 +63,30 @@ class GhidraServer(BackendServer):
 
         return await call_ghidra(fn, *args, **kwargs)
 
+    def tool(self, name_or_fn: Any = None, **kwargs: Any) -> Any:
+        """Register a tool and remember its plain sync function.
+
+        batch and execute call tools directly on the main thread through
+        :data:`re_mcp_ghidra.programmable.registry`, inside one transaction,
+        instead of round-tripping through MCP.  The function recorded is the
+        one handed to the decorator (still guarded by session.require_open),
+        not BackendServer's async main-thread dispatcher.
+        """
+        from re_mcp_ghidra.programmable import registry  # noqa: PLC0415
+
+        if callable(name_or_fn):
+            registry.add(kwargs.get("name") or name_or_fn.__name__, name_or_fn)
+            return super().tool(name_or_fn, **kwargs)
+
+        inner = super().tool(name_or_fn, **kwargs)
+        explicit = name_or_fn if isinstance(name_or_fn, str) else kwargs.get("name")
+
+        def decorator(fn: Callable[..., Any]) -> Any:
+            registry.add(explicit or fn.__name__, fn)
+            return inner(fn)
+
+        return decorator
+
 
 # ---------------------------------------------------------------------------
 # Entry point
