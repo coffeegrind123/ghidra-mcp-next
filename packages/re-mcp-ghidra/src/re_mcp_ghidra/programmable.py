@@ -62,6 +62,7 @@ NOT_IN_TRANSACTION = frozenset(
         "wait_for_analysis",
         "reanalyze_range",
         "set_image_base",
+        "run_ghidra_script",
         "_batch",
         "_execute",
     }

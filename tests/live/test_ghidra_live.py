@@ -28,6 +28,7 @@ from fastmcp.client.transports import StdioTransport
 
 GHIDRA = os.environ.get("GHIDRA_INSTALL_DIR", "")
 SAMPLE = shutil.which("true") or "/bin/true"
+SCRIPTS = Path(__file__).with_name("scripts")
 
 pytestmark = [
     pytest.mark.live,
@@ -65,7 +66,7 @@ class Recorder:
 
 async def _scenario(binary: Path) -> dict[str, Any]:
     supervisor = Path(sys.executable).with_name("re-mcp-ghidra")
-    env = {**os.environ, "GHIDRA_INSTALL_DIR": GHIDRA}
+    env = {**os.environ, "GHIDRA_INSTALL_DIR": GHIDRA, "GHIDRA_MCP_SCRIPT_DIRS": str(SCRIPTS)}
     out: dict[str, Any] = {}
 
     async with Client(StdioTransport(str(supervisor), [], env=env), timeout=900) as client:
@@ -164,7 +165,17 @@ async def _scenario(binary: Path) -> dict[str, Any]:
         out["blocked"] = await rec("batch", database=db, ops=[{"tool": "undo", "params": {}}])
         out["call_internal"] = await rec("call", tool="_batch", arguments={}, database=db)
 
-        out["save"] = await rec("save_database", database=db)
+        out["scripts"] = await rec.tool("list_ghidra_scripts", filter_pattern="Test")
+        out["java"] = await rec.tool(
+            "run_ghidra_script", script="RenameFirst.java", args=[first["start"], "via_java"]
+        )
+        out["java_fail"] = await rec.tool(
+            "run_ghidra_script", script="RenameFirst.java", args=[first["start"], "x", "fail"]
+        )
+        out["after_java"] = await rec.tool("get_function", address=first["start"])
+        out["python_script"] = await rec.tool("run_ghidra_script", script="count_funcs.py")
+
+        out["save"] = await rec("save_database", database=db, comment="live test")
         await rec("close_database", database=db)
 
         gpr = binary.parent / "ghidra_projects" / f"{binary.name}.gpr"
@@ -260,6 +271,26 @@ def test_undo_names_the_step(run):
 def test_lifecycle_tools_refused_in_batch(run):
     assert run["blocked"]["error_type"] == "InvalidOp"
     assert run["call_internal"]["is_error"]
+
+
+def test_scripts_listed_from_extra_dirs(run):
+    names = [i["name"] for i in run["scripts"]["items"]]
+    assert {"RenameFirst.java", "count_funcs.py"} <= set(names)
+
+
+def test_java_script_runs_as_one_step(run):
+    assert run["java"]["applied"] is True
+    assert run["java"]["undo_name"] == "MCP: script RenameFirst.java"
+    assert run["java"]["stdout"].startswith("renamed ")
+
+
+def test_failing_script_rolls_back(run):
+    assert run["java_fail"]["error_type"] == "ScriptError"
+    assert run["after_java"]["name"] == "via_java"
+
+
+def test_python_script_runs(run):
+    assert run["python_script"]["stdout"].startswith("functions: ")
 
 
 def test_save_reopen_from_project(run):
