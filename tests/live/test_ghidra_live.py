@@ -175,6 +175,9 @@ async def _scenario(binary: Path) -> dict[str, Any]:
         out["after_java"] = await rec.tool("get_function", address=first["start"])
         out["python_script"] = await rec.tool("run_ghidra_script", script="count_funcs.py")
 
+        out["scores"] = await rec.tool("score_documentation", include_locals=True, limit=5)
+        out["rerun"] = await rec.tool("run_auto_analysis")
+
         out["save"] = await rec("save_database", database=db, comment="live test")
         await rec("close_database", database=db)
 
@@ -291,6 +294,18 @@ def test_failing_script_rolls_back(run):
 
 def test_python_script_runs(run):
     assert run["python_script"]["stdout"].startswith("functions: ")
+
+
+def test_documentation_scores_worst_first(run):
+    items = run["scores"]["items"]
+    assert items, run["scores"]
+    assert [i["score"] for i in items] == sorted(i["score"] for i in items)
+    assert all(0 <= i["score"] <= 100 for i in items)
+    assert "name" in items[0]["missing"]
+
+
+def test_auto_analysis_reruns(run):
+    assert run["rerun"]["functions_after"] >= run["rerun"]["functions_before"] > 0
 
 
 def test_save_reopen_from_project(run):
