@@ -38,9 +38,16 @@ from pydantic import BaseModel, Field
 from pydantic import ValidationError as PydanticValidationError
 
 from re_mcp.exceptions import BackendError
-from re_mcp.sandbox import RestrictedPythonSandbox
 
 META_TOOLS = frozenset({"search_tools", "get_schema", "execute", "batch", "call"})
+
+# The worker's side of batch/execute (re_mcp_ghidra.tools.program_ops).  A
+# leading underscore marks a tool as internal: never listed, searched, shown
+# by get_schema, or callable through call.
+INTERNAL_PREFIX = "_"
+
+# Must match re_mcp_ghidra.programmable.MAX_BATCH_OPS.
+MAX_BATCH_OPS = 100
 
 MANAGEMENT_TOOLS = frozenset(
     {
@@ -300,7 +307,7 @@ def _check_blocked(tool_name: str, caller: str) -> None:
     Shared by ``invoke`` (execute), ``batch``, and ``call`` so the error
     message and check are defined once.
     """
-    if tool_name in DEFAULT_BLOCKED_TOOLS:
+    if tool_name in DEFAULT_BLOCKED_TOOLS or tool_name.startswith(INTERNAL_PREFIX):
         raise BackendError(
             f"'{tool_name}' cannot be called via {caller}. "
             "Lifecycle tools and meta-tools must be called directly.",
@@ -371,90 +378,14 @@ async def _format_validation_error(
 class BatchOperation(BaseModel):
     """A single operation in a batch request."""
 
-    tool: str = Field(description="Tool name to call.")
-    params: dict[str, Any] = Field(default_factory=dict, description="Tool parameters.")
-
-
-class BatchItemResult(BaseModel):
-    """Result of one operation in a batch."""
-
-    index: int = Field(description="0-based position in the input list.")
-    tool: str = Field(description="Tool that was called.")
-    result: Any = Field(default=None, description="Tool result on success, null on error.")
-    error: str | None = Field(default=None, description="Error message if this item failed.")
-
-
-class BatchResult(BaseModel):
-    """Result of a batch execution."""
-
-    results: list[BatchItemResult] = Field(description="Per-operation results.")
-    succeeded: int = Field(description="Number of successful operations.")
-    failed: int = Field(description="Number of failed operations.")
-    cancelled: bool = Field(
-        default=False,
-        description="Whether batch stopped before completing all operations (stop_on_error or client cancellation).",
+    tool: str = Field(description='Tool name. Example: "rename_function"')
+    params: dict[str, Any] = Field(
+        default_factory=dict,
+        description=(
+            "The tool's parameters, without database. Example: "
+            '{"address": "0x401000", "new_name": "parse_packet"}'
+        ),
     )
-
-
-_EXECUTE_DESCRIPTION_PREAMBLE = """\
-Run Python code that chains tool calls. Use `await invoke(name, params)` \
-to call tools; use `return` to produce output.
-
-`database` is auto-injected into every `invoke` — omit it from params. \
-Override per-call with explicit `database` for cross-database work.
-
-## When NOT to use execute
-
-- **Single tool call** → use the **call** meta-tool (or the direct tool if pinned).
-<<BATCH_LINE>>\
-- Check if a tool has a built-in batch parameter first (e.g. \
-get_strings `filters=[...]`).
-
-## When to use execute
-
-**Multi-step pipelines** — chaining one tool's output into another:
-```
-decomp = await invoke("decompile_function", {"address": "0x1234"})
-addrs = re.findall(r'sub_([0-9A-Fa-f]+)', decomp["pseudocode"])
-xrefs = [await invoke("get_xrefs_to", {"address": f"0x{a}"}) for a in addrs]
-return {"decomp": decomp, "xrefs": xrefs}
-```
-
-**Cross-database parallel queries** — use asyncio.gather with explicit \
-`database` params. Same-database calls are serialized by the worker.
-
-## Reference
-
-- **Blocked tools:** open_database, close_database, \
-wait_for_analysis, list_targets, and meta-tools (<<META_TOOL_LIST>>) \
-must be called directly. save_database and list_databases are allowed.
-- **Addresses** are strings: "0x401000", "4010a0", or symbol names.
-- **filter_pattern** is Python regex — use `re.escape()` for literals.
-- **Available imports:** asyncio, collections, functools, itertools, \
-json, math, operator, re, struct, typing. No FS/network I/O.
-- **Paginated results** have `items`, `total`, `offset`, `limit`, \
-`has_more` — always check `has_more`.
-<<SCHEMA_HINT>>\
-- **Return only what you need** — filter before returning to save context.\
-"""
-
-
-_PROCESSING_PATTERN = re.compile(
-    r"\bfor\b|\bwhile\b|\bif\b|\bgather\b|\bcreate_task\b|\bre\.\b"
-    r"|\bjson\.\b|\bmath\.\b"
-    r"|\bint\(|\blen\(|\bstr\(|\bsorted\(|\bfilter\(|\bmap\("
-    r"|\bzip\(|\benumerate\(|\bany\(|\ball\(|\bsum\(|\bmin\(|\bmax\("
-    r"|\[[^\]]*\bfor\b"  # list comprehensions
-)
-
-
-def _has_processing_logic(code: str) -> bool:
-    """Return True if code contains loops, conditionals, or data processing.
-
-    Intentionally a loose heuristic — false negatives are acceptable since
-    this only drives an advisory hint on single-call execute blocks.
-    """
-    return bool(_PROCESSING_PATTERN.search(code))
 
 
 def unwrap_auto_wrapped(data: dict[str, Any]) -> dict[str, Any]:
@@ -554,7 +485,7 @@ class ToolTransform(CatalogTransform):
             visible = [t for t in tools if t.name in self._pinned]
             out: list[Tool] = [*visible, self._get_search_tool(), self._get_schema_tool()]
         else:
-            out = list(tools)
+            out = [t for t in tools if not t.name.startswith(INTERNAL_PREFIX)]
         if self._enable_execute:
             out.append(self._get_execute_tool())
         if self._enable_batch:
@@ -624,7 +555,11 @@ class ToolTransform(CatalogTransform):
             — direct calls will fail because they are not in the client tool list.
             """
             catalog = await self.get_tool_catalog(ctx)
-            hidden = [t for t in catalog if t.name not in self._pinned]
+            hidden = [
+                t
+                for t in catalog
+                if t.name not in self._pinned and not t.name.startswith(INTERNAL_PREFIX)
+            ]
 
             try:
                 compiled = re.compile(pattern, re.IGNORECASE)
@@ -701,7 +636,9 @@ class ToolTransform(CatalogTransform):
             if self._enable_batch:
                 meta.append(self._get_batch_tool())
             meta.append(self._get_call_tool())
-            catalog_by_name = {t.name: t for t in [*catalog, *meta]}
+            catalog_by_name = {
+                t.name: t for t in [*catalog, *meta] if not t.name.startswith(INTERNAL_PREFIX)
+            }
             matched = [catalog_by_name[n] for n in tools if n in catalog_by_name]
             not_found = [n for n in tools if n not in catalog_by_name]
 
@@ -724,112 +661,103 @@ class ToolTransform(CatalogTransform):
         return self._cached_execute_tool
 
     def _make_execute_tool(self) -> Tool:
-        sandbox = RestrictedPythonSandbox()
-
         async def execute(
             code: Annotated[
                 str,
                 Field(
                     description=(
-                        "Python async code to execute tool calls via invoke(name, arguments)"
+                        "Python 3 statements, run as a function body: `return x` gives "
+                        "the result (or a final bare expression). Example: "
+                        '"fm = program.getFunctionManager()\\nreturn fm.getFunctionCount()"'
                     )
                 ),
             ],
             database: Annotated[
                 str,
+                Field(description='Database id from open_database. Example: "server_dll"'),
+            ],
+            read_only: Annotated[
+                bool,
                 Field(
                     description=(
-                        "Database to target (stem ID from open_database). "
-                        "Available as `database` variable in code and "
-                        "auto-injected into invoke params. Individual "
-                        "calls can override by passing `database` explicitly."
-                    ),
+                        "true: the transaction is always rolled back, so the script "
+                        "cannot change the program. Use for pure reads. Example: true"
+                    )
                 ),
-            ],
+            ] = False,
+            label: Annotated[
+                str,
+                Field(
+                    description=(
+                        'Names the undo step "MCP: <label>". Example: "rename vtable slots"'
+                    )
+                ),
+            ] = "",
+            timeout_s: Annotated[
+                int,
+                Field(
+                    ge=1,
+                    le=600,
+                    description="Time limit in seconds (1-600). Example: 120",
+                ),
+            ] = 30,
+            if_revision: Annotated[
+                int | None,
+                Field(
+                    description=(
+                        "Refuse with TargetChanged unless the program is still at this "
+                        "revision (from an earlier result). Example: 1284"
+                    )
+                ),
+            ] = None,
+            operation_id: Annotated[
+                str | None,
+                Field(
+                    description=(
+                        "Idempotency key: repeating it returns the stored result "
+                        'instead of running again. Example: "rename-pass-3"'
+                    )
+                ),
+            ] = None,
             ctx: Context | None = None,
-        ) -> Any:
-            """Execute tool calls using Python code."""
+        ) -> dict[str, Any] | str:
+            """Run Python 3 against the open program, in ONE transaction.
+
+            For loops, computed changes and reads no single tool covers. The code
+            runs in the worker (CPython through pyghidra/JPype, not Jython) with:
+            `program`/`currentProgram`, `flat` (FlatProgramAPI), `monitor`, `toAddr`,
+            `decompile(func_or_address) -> str`, `tools.<name>(**params)` (any tool,
+            returning the same dict it returns over MCP), and the `ghidra`/`java`
+            packages (`from ghidra.program.model.symbol import SourceType`).
+
+            Returns {result, stdout, applied, undo_name, revision, truncated}.
+            Limits: timeout_s (checked between Python lines), stdout 64 KiB,
+            result 256 KiB.
+
+            Failure halfway (any exception, timeout): the whole transaction is
+            rolled back and NOTHING is changed; the error carries error_type, the
+            script line, stdout so far and the current revision. A successful
+            write is one undo step (undo removes it).
+            """
             if ctx is None:
                 raise BackendError("execute requires an MCP context")
+            params: dict[str, Any] = {
+                "database": database,
+                "code": code,
+                "read_only": read_only,
+                "label": label,
+                "timeout_s": timeout_s,
+                "if_revision": if_revision,
+                "operation_id": operation_id,
+            }
+            task = asyncio.create_task(_safe_call_tool(ctx, "_execute", params))
+            await run_with_heartbeat(task, ctx)
+            return task.result()
 
-            call_count = 0
-
-            async def invoke(tool_name: str, params: dict[str, Any]) -> Any:
-                nonlocal call_count
-                _check_blocked(tool_name, "execute")
-                if "database" not in params:
-                    params = {**params, "database": database}
-                call_count += 1
-                return await _safe_call_tool(ctx, tool_name, params)
-
-            sandbox_task = asyncio.create_task(
-                sandbox.run(
-                    code,
-                    inputs={"database": database},
-                    external_functions={"invoke": invoke},
-                )
-            )
-            await run_with_heartbeat(sandbox_task, ctx)
-
-            try:
-                result = sandbox_task.result()
-            except SyntaxError as exc:
-                raise BackendError(str(exc), error_type="SyntaxError") from exc
-            except BackendError:
-                raise
-            except Exception as exc:
-                raise BackendError(str(exc)) from exc
-
-            if call_count == 1 and not _has_processing_logic(code):
-                hint = (
-                    "Hint: this execute block contained a single invoke with "
-                    "no processing. Use the **call** meta-tool instead for "
-                    "single tool calls (or the direct tool if it is pinned)."
-                )
-                if isinstance(result, dict):
-                    result = {**result, "_hint": hint}
-                elif isinstance(result, str):
-                    result = result + "\n\n" + hint
-
-            return result
-
-        if self._enable_batch:
-            batch_line = (
-                "- **N independent calls** → use `batch` "
-                "(lower overhead, per-item errors).\n"
-                "  → Otherwise, use the **batch** meta-tool for sequential "
-                "multi-tool\n    execution with per-item error collection and "
-                "progress reporting.\n"
-            )
-        else:
-            batch_line = ""
-        meta_parts = []
-        if self._enable_tool_search:
-            meta_parts += ["search_tools", "get_schema"]
-        meta_parts.append("execute")
-        if self._enable_batch:
-            meta_parts.append("batch")
-        meta_parts.append("call")
-        meta_tool_list = ", ".join(meta_parts)
-        schema_hint = (
-            "- Use `get_schema(tools=[...])` to look up parameter names and types.\n"
-            if self._enable_tool_search
-            else ""
-        )
-        description = (
-            _EXECUTE_DESCRIPTION_PREAMBLE.replace("<<BATCH_LINE>>", batch_line)
-            .replace("<<META_TOOL_LIST>>", meta_tool_list)
-            .replace("<<SCHEMA_HINT>>", schema_hint)
-        )
-
-        return Tool.from_function(
-            fn=execute,
-            name="execute",
-            description=description,
-        )
+        return Tool.from_function(fn=execute, name="execute")
 
     # ------------------------------------------------------------------
-    # batch — sequential multi-tool execution with error collection
+    # batch
     # ------------------------------------------------------------------
 
     def _get_batch_tool(self) -> Tool:
@@ -839,94 +767,92 @@ class ToolTransform(CatalogTransform):
 
     def _make_batch_tool(self) -> Tool:
         async def batch(
-            operations: Annotated[
+            ops: Annotated[
                 list[BatchOperation],
                 Field(
-                    description="List of tool calls to execute sequentially (max 50).",
-                    max_length=50,
+                    min_length=1,
+                    max_length=MAX_BATCH_OPS,
+                    description=(
+                        f"Ordered tool calls, at most {MAX_BATCH_OPS}. A param string "
+                        '"$N.path" is replaced by that value from op N\'s result, keeping '
+                        'its type; "${N.path}" interpolates inside a longer string; '
+                        '"$$" escapes a leading $. Example: '
+                        '[{"tool": "get_function", "params": {"address": "main"}}, '
+                        '{"tool": "rename_function", "params": {"address": "$0.start", '
+                        '"new_name": "entry_main"}}]'
+                    ),
                 ),
             ],
             database: Annotated[
                 str,
+                Field(description='Database id from open_database. Example: "server_dll"'),
+            ],
+            label: Annotated[
+                str,
                 Field(
                     description=(
-                        "Database to target (stem ID from open_database). "
-                        "Auto-injected into each operation's params. "
-                        "Individual operations can override by including "
-                        "`database` in their params."
-                    ),
+                        'Names the undo step "MCP: <label>"; defaults to the tool '
+                        'names. Example: "name packet handlers"'
+                    )
                 ),
-            ],
-            stop_on_error: Annotated[
+            ] = "",
+            if_revision: Annotated[
+                int | None,
+                Field(
+                    description=(
+                        "Refuse with TargetChanged unless the program is still at this "
+                        "revision (from an earlier result). Example: 1284"
+                    )
+                ),
+            ] = None,
+            operation_id: Annotated[
+                str | None,
+                Field(
+                    description=(
+                        "Idempotency key: repeating it returns the stored result with "
+                        'replayed=true instead of applying twice. Example: "handlers-v1"'
+                    )
+                ),
+            ] = None,
+            dry_run: Annotated[
                 bool,
-                Field(description="Stop on first error instead of continuing."),
-            ] = True,
+                Field(
+                    description=(
+                        "Run every op, return the results, then roll everything back. Example: true"
+                    )
+                ),
+            ] = False,
             ctx: Context | None = None,
-        ) -> BatchResult:
-            """Run 2+ independent tool calls in a single request with per-item error collection.
+        ) -> dict[str, Any] | str:
+            """Run several tool calls in order as ONE atomic change.
 
-            Preferred over `execute` for independent calls (no sandbox overhead).
-            Examples: decompile/disassemble N functions, rename N symbols, set N
-            comments, fetch N xrefs.
+            Use for any set of 2+ calls: renaming N functions, setting N comments,
+            building a struct and applying it, decompiling N functions. Any tool
+            (pinned or found with search_tools) can be an op, except lifecycle
+            tools (open/close/save_database, wait_for_analysis), undo/redo and the
+            meta tools.
 
-            Use `execute` only when chaining one tool's output into another.
-
-            `database` is auto-injected into each operation — omit from params.
-            Override per-operation with explicit `database` for cross-DB work.
+            All ops share one transaction. If any op fails, the whole batch is
+            rolled back and NOTHING is changed; the error names op_index, tool,
+            error_type and the current revision. On success the batch is one undo
+            step and returns {results: [one per op], applied, undo_name,
+            revision}.
             """
             if ctx is None:
                 raise BackendError("batch requires an MCP context")
-
-            results: list[BatchItemResult] = []
-            succeeded = failed = 0
-            cancelled = False
-
-            try:
-                for i, op in enumerate(operations):
-                    try:
-                        _check_blocked(op.tool, "batch")
-                        params = op.params
-                        if "database" not in params:
-                            params = {**params, "database": database}
-                        payload = await _safe_call_tool(ctx, op.tool, params)
-                        results.append(BatchItemResult(index=i, tool=op.tool, result=payload))
-                        succeeded += 1
-                    except Exception as exc:
-                        results.append(BatchItemResult(index=i, tool=op.tool, error=str(exc)))
-                        failed += 1
-
-                    if i + 1 < len(operations):
-                        await ctx.report_progress(i + 1, len(operations))
-
-                    if stop_on_error and failed:
-                        cancelled = True
-                        break
-            except asyncio.CancelledError:
-                cancelled = True
-
-            batch_result = BatchResult(
-                results=results,
-                succeeded=succeeded,
-                failed=failed,
-                cancelled=cancelled,
-            )
-
-            # Raise when any operation failed so the MCP response has
-            # isError=True — otherwise the client sees a "successful" call
-            # with errors buried in the results array.
-            if failed > 0:
-                raise BackendError(
-                    batch_result.model_dump_json(),
-                    error_type="BatchFailed",
-                )
-
-            return batch_result
+            params: dict[str, Any] = {
+                "database": database,
+                "ops": [op.model_dump() for op in ops],
+                "label": label,
+                "if_revision": if_revision,
+                "operation_id": operation_id,
+                "dry_run": dry_run,
+            }
+            task = asyncio.create_task(_safe_call_tool(ctx, "_batch", params))
+            await run_with_heartbeat(task, ctx)
+            return task.result()
 
         return Tool.from_function(fn=batch, name="batch")
-
-    # ------------------------------------------------------------------
-    # call — lightweight proxy for calling any tool by name
-    # ------------------------------------------------------------------
 
     def _get_call_tool(self) -> Tool:
         if self._cached_call_tool is None:

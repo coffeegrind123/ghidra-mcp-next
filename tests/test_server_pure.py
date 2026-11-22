@@ -16,9 +16,7 @@ from pydantic import ValidationError
 from re_mcp.server import auto_title as _auto_title
 from re_mcp.server import ensure_title as _ensure_title
 from re_mcp.transforms import (
-    BatchItemResult,
     BatchOperation,
-    BatchResult,
 )
 from re_mcp_ghidra.models import RenameResult
 from re_mcp_ghidra.server import _UPPERCASE_WORDS
@@ -135,48 +133,3 @@ class TestBatchOperationSchema:
     def test_missing_tool(self):
         with pytest.raises(ValidationError):
             BatchOperation.model_validate({"params": {}})
-
-
-class TestBatchItemResultSchema:
-    def test_success(self):
-        obj = BatchItemResult.model_validate(
-            {"index": 0, "tool": "get_comment", "result": {"address": "0x401000"}}
-        )
-        assert obj.error is None
-        assert obj.result["address"] == "0x401000"
-
-    def test_error(self):
-        obj = BatchItemResult.model_validate(
-            {"index": 1, "tool": "get_comment", "error": "No function found"}
-        )
-        assert obj.result is None
-        assert obj.error == "No function found"
-
-
-class TestBatchResultSchema:
-    def test_valid(self):
-        data = {
-            "results": [
-                {"index": 0, "tool": "get_comment", "result": {"address": "0x401000"}},
-                {"index": 1, "tool": "get_comment", "error": "No function found"},
-            ],
-            "succeeded": 1,
-            "failed": 1,
-            "cancelled": False,
-        }
-        obj = BatchResult.model_validate(data)
-        assert obj.succeeded == 1
-        assert obj.failed == 1
-        assert len(obj.results) == 2
-
-    def test_empty_batch(self):
-        obj = BatchResult.model_validate(
-            {"results": [], "succeeded": 0, "failed": 0, "cancelled": False}
-        )
-        assert len(obj.results) == 0
-
-    def test_cancelled(self):
-        obj = BatchResult.model_validate(
-            {"results": [], "succeeded": 0, "failed": 0, "cancelled": True}
-        )
-        assert obj.cancelled is True

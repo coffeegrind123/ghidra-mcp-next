@@ -31,13 +31,11 @@ from pydantic import ValidationError as PydanticValidationError
 from re_mcp.exceptions import BackendError
 from re_mcp.supervisor import ProxyMCP
 from re_mcp.transforms import (
-    META_TOOLS,
     BatchOperation,
     ToolTransform,
     _format_default,
     _format_return_type,
     _format_validation_error,
-    _has_processing_logic,
     _render_type_annotation,
     _signature_line,
     _type_label,
@@ -1909,81 +1907,6 @@ class TestFixupEnrichConsistency:
 
 
 # ---------------------------------------------------------------------------
-# _has_processing_logic
-# ---------------------------------------------------------------------------
-
-
-class TestHasProcessingLogic:
-    """Pure function — no backend context needed."""
-
-    def test_for_loop(self):
-        assert _has_processing_logic("for x in items:\n    pass") is True
-
-    def test_while_loop(self):
-        assert _has_processing_logic("while True:\n    break") is True
-
-    def test_if_statement(self):
-        assert _has_processing_logic("if x > 0:\n    return x") is True
-
-    def test_asyncio_gather(self):
-        assert _has_processing_logic("await asyncio.gather(a(), b())") is True
-
-    def test_re_usage(self):
-        assert _has_processing_logic("re.findall(r'\\d+', text)") is True
-
-    def test_json_usage(self):
-        assert _has_processing_logic("json.loads(data)") is True
-
-    def test_math_usage(self):
-        assert _has_processing_logic("math.floor(x)") is True
-
-    def test_int_conversion(self):
-        assert _has_processing_logic("int(addr, 16)") is True
-
-    def test_len_call(self):
-        assert _has_processing_logic("len(results)") is True
-
-    def test_sorted_call(self):
-        assert _has_processing_logic("sorted(items)") is True
-
-    def test_list_comprehension(self):
-        assert _has_processing_logic("[x for x in items]") is True
-
-    def test_zip_call(self):
-        assert _has_processing_logic("list(zip(a, b))") is True
-
-    def test_enumerate_call(self):
-        assert _has_processing_logic("for i, v in enumerate(items):") is True
-
-    def test_any_call(self):
-        assert _has_processing_logic("any(x > 0 for x in items)") is True
-
-    def test_all_call(self):
-        assert _has_processing_logic("all(x > 0 for x in items)") is True
-
-    def test_sum_call(self):
-        assert _has_processing_logic("sum(x['count'] for x in items)") is True
-
-    def test_min_call(self):
-        assert _has_processing_logic("min(sizes)") is True
-
-    def test_max_call(self):
-        assert _has_processing_logic("max(sizes)") is True
-
-    def test_asyncio_create_task(self):
-        assert _has_processing_logic("asyncio.create_task(foo())") is True
-
-    def test_plain_single_call(self):
-        assert _has_processing_logic("r = await invoke('foo', {})\nreturn r") is False
-
-    def test_return_only(self):
-        assert _has_processing_logic("return result") is False
-
-    def test_empty_string(self):
-        assert _has_processing_logic("") is False
-
-
-# ---------------------------------------------------------------------------
 # ToolTransform.search_tools
 # ---------------------------------------------------------------------------
 
@@ -2498,470 +2421,93 @@ class TestSignatureRendering:
 
 
 # ---------------------------------------------------------------------------
-# ToolTransform.execute — single-call hint injection
+# ToolTransform — batch/execute forward to the worker's _batch/_execute
 # ---------------------------------------------------------------------------
 
 
-class TestExecuteHint:
-    """execute injects a hint when code makes exactly one invoke with no processing."""
+def _forwarding_ctx(payload):
+    ctx = MagicMock()
+    ctx.fastmcp = MagicMock()
+    ctx.report_progress = AsyncMock()
+    result = MagicMock()
+    result.structured_content = payload
+    result.content = []
+    ctx.fastmcp.call_tool = AsyncMock(return_value=result)
+    return ctx
 
-    def _make_ctx(self, structured_content=None) -> MagicMock:
-        tool_result = MagicMock()
-        tool_result.structured_content = structured_content
-        tool_result.content = []
-        ctx = MagicMock()
-        ctx.fastmcp = MagicMock()
-        ctx.fastmcp.call_tool = AsyncMock(return_value=tool_result)
-        return ctx
+
+class TestBatchExecuteForwarding:
+    """The supervisor's meta tools are thin forwarders; the worker owns the transaction."""
 
     @pytest.mark.asyncio
-    async def test_hint_injected_into_dict_result(self):
-        """Single call with dict result gets _hint key appended."""
-        ctx = self._make_ctx(structured_content={"items": [1, 2], "total": 2})
-        transform = ToolTransform(pinned=PINNED_TOOLS)
-        fn = transform._get_execute_tool().fn
-        result = await fn(
-            code="r = await invoke('list_functions', {})\nreturn r",
+    async def test_batch_forwards_all_arguments(self):
+        ctx = _forwarding_ctx({"results": [{"a": 1}], "applied": True, "revision": 7})
+        fn = ToolTransform(pinned=PINNED_TOOLS)._get_batch_tool().fn
+        out = await fn(
+            ops=[BatchOperation(tool="rename_function", params={"address": "0x1"})],
             database="db",
+            label="names",
+            if_revision=6,
+            operation_id="k1",
+            dry_run=True,
             ctx=ctx,
         )
-        assert isinstance(result, dict)
-        assert "_hint" in result
+        assert out == {"results": [{"a": 1}], "applied": True, "revision": 7}
+        name, params = ctx.fastmcp.call_tool.call_args.args
+        assert name == "_batch"
+        assert params == {
+            "database": "db",
+            "ops": [{"tool": "rename_function", "params": {"address": "0x1"}}],
+            "label": "names",
+            "if_revision": 6,
+            "operation_id": "k1",
+            "dry_run": True,
+        }
 
     @pytest.mark.asyncio
-    async def test_hint_injected_into_str_result(self):
-        """Single call with string result gets hint appended after newlines."""
-        ctx = self._make_ctx(structured_content=None)
-        ctx.fastmcp.call_tool.return_value.content = [MagicMock(text="some output", spec=["text"])]
-        transform = ToolTransform(pinned=PINNED_TOOLS)
-        fn = transform._get_execute_tool().fn
-        result = await fn(
-            code="r = await invoke('list_functions', {})\nreturn r",
-            database="db",
-            ctx=ctx,
-        )
-        assert isinstance(result, str)
-        assert "Hint:" in result
+    async def test_execute_forwards_all_arguments(self):
+        ctx = _forwarding_ctx({"result": 3, "stdout": "", "applied": False})
+        fn = ToolTransform(pinned=PINNED_TOOLS)._get_execute_tool().fn
+        out = await fn(code="return 3", database="db", read_only=True, timeout_s=5, ctx=ctx)
+        assert out["result"] == 3
+        name, params = ctx.fastmcp.call_tool.call_args.args
+        assert name == "_execute"
+        assert params["code"] == "return 3"
+        assert params["read_only"] is True
+        assert params["timeout_s"] == 5
+        assert params["database"] == "db"
 
     @pytest.mark.asyncio
-    async def test_no_hint_when_processing_logic_present(self):
-        """Single call with processing logic (e.g. for loop) does not get hint."""
-        ctx = self._make_ctx(structured_content={"items": []})
-        transform = ToolTransform(pinned=PINNED_TOOLS)
-        fn = transform._get_execute_tool().fn
-        result = await fn(
-            code=(
-                "r = await invoke('list_functions', {})\nfor x in r['items']:\n    pass\nreturn r"
-            ),
-            database="db",
-            ctx=ctx,
-        )
-        assert isinstance(result, dict)
-        assert "_hint" not in result
-
-    @pytest.mark.asyncio
-    async def test_no_hint_when_multiple_calls(self):
-        """Multiple calls suppress the hint even with no processing logic."""
-        ctx = self._make_ctx(structured_content={"items": []})
-        transform = ToolTransform(pinned=PINNED_TOOLS)
-        fn = transform._get_execute_tool().fn
-        result = await fn(
-            code=(
-                "a = await invoke('list_functions', {})\n"
-                "b = await invoke('get_strings', {})\n"
-                "return b"
-            ),
-            database="db",
-            ctx=ctx,
-        )
-        assert isinstance(result, dict)
-        assert "_hint" not in result
-
-
-# ---------------------------------------------------------------------------
-# ToolTransform.execute — blocked-tool enforcement
-# ---------------------------------------------------------------------------
-
-
-class TestExecuteBlockedTools:
-    """execute must refuse lifecycle/meta tools; save_database and list_databases are allowed."""
-
-    def _make_ctx(self) -> MagicMock:
-        ctx = MagicMock()
-        ctx.fastmcp = MagicMock()
-        ctx.fastmcp.call_tool = AsyncMock()
-        return ctx
-
-    @pytest.mark.asyncio
-    @pytest.mark.parametrize(
-        "tool_name",
-        sorted(MANAGEMENT_TOOLS - {"save_database", "list_databases"}),
-    )
-    async def test_blocks_lifecycle_management_tools(self, tool_name: str):
-        """Lifecycle tools (open/close/wait/list_targets) are blocked."""
-        transform = ToolTransform(pinned=PINNED_TOOLS)
-        fn = transform._get_execute_tool().fn
-        ctx = self._make_ctx()
-
-        with pytest.raises(BackendError, match="cannot be called via execute"):
-            await fn(
-                code=f"return await invoke('{tool_name}', {{}})",
-                database="db",
-                ctx=ctx,
-            )
-
-    @pytest.mark.asyncio
-    @pytest.mark.parametrize("tool_name", ["save_database", "list_databases"])
-    async def test_allows_save_and_list_databases(self, tool_name: str):
-        """save_database and list_databases are useful inside execute blocks."""
-        transform = ToolTransform(pinned=PINNED_TOOLS)
-        fn = transform._get_execute_tool().fn
-        ctx = self._make_ctx()
-        ctx.fastmcp.call_tool.return_value = MagicMock(
-            content=[MagicMock(type="text", text='{"ok": true}')],
-            isError=False,
-        )
-
-        # Should not raise
-        await fn(
-            code=f"return await invoke('{tool_name}', {{}})",
-            database="db",
-            ctx=ctx,
-        )
-
-    @pytest.mark.asyncio
-    async def test_blocks_search_tools_meta(self):
-        """search_tools is also blocked inside execute."""
-        transform = ToolTransform(pinned=PINNED_TOOLS)
-        fn = transform._get_execute_tool().fn
-        ctx = self._make_ctx()
-
-        with pytest.raises(BackendError, match="cannot be called via execute"):
-            await fn(
-                code="return await invoke('search_tools', {'pattern': '.*'})",
-                database="db",
-                ctx=ctx,
-            )
-
-    @pytest.mark.asyncio
-    async def test_blocks_execute_meta(self):
-        """execute itself is blocked inside execute (no recursion)."""
-        transform = ToolTransform(pinned=PINNED_TOOLS)
-        fn = transform._get_execute_tool().fn
-        ctx = self._make_ctx()
-
-        with pytest.raises(BackendError, match="cannot be called via execute"):
-            await fn(
-                code="return await invoke('execute', {'code': 'return 1'})",
-                database="db",
-                ctx=ctx,
-            )
-
-    @pytest.mark.asyncio
-    async def test_user_code_error_surfaces_as_backend_error(self):
-        """Python errors in user code are wrapped in BackendError."""
-        transform = ToolTransform(pinned=PINNED_TOOLS)
-        fn = transform._get_execute_tool().fn
-        ctx = self._make_ctx()
-
-        with pytest.raises(BackendError):
-            await fn(code="return undefined_variable", database="db", ctx=ctx)
-
-    @pytest.mark.asyncio
-    async def test_execute_without_ctx_raises_backend_error(self):
-        """execute with ctx=None raises BackendError instead of AttributeError."""
-        transform = ToolTransform(pinned=PINNED_TOOLS)
-        fn = transform._get_execute_tool().fn
-
-        with pytest.raises(BackendError, match="execute requires an MCP context"):
-            await fn(code="return 1", database="db", ctx=None)
-
-    @pytest.mark.asyncio
-    async def test_syntax_error_wrapped_as_backend_error(self):
-        """Invalid Python syntax is reported as BackendError with error_type=SyntaxError."""
-        transform = ToolTransform(pinned=PINNED_TOOLS)
-        fn = transform._get_execute_tool().fn
-        ctx = self._make_ctx()
-
-        with pytest.raises(BackendError) as exc:
-            await fn(code="return (unterminated", database="db", ctx=ctx)
-        assert exc.value.error_type == "SyntaxError"
-
-
-# ---------------------------------------------------------------------------
-# ToolTransform.batch — runtime behavior
-# ---------------------------------------------------------------------------
-
-
-class TestBatchMetaTool:
-    """batch meta-tool runtime behavior tests."""
-
-    def _make_ctx(self, results=None) -> MagicMock:
-        """Build a mock MCP context.
-
-        *results* is a list of return values (or exceptions) for successive
-        ``ctx.fastmcp.call_tool`` invocations.
-        """
+    async def test_worker_error_propagates(self):
         ctx = MagicMock()
         ctx.fastmcp = MagicMock()
         ctx.report_progress = AsyncMock()
-        if results is None:
-            tool_result = MagicMock()
-            tool_result.structured_content = {"ok": True}
-            tool_result.content = []
-            ctx.fastmcp.call_tool = AsyncMock(return_value=tool_result)
-        else:
-            side_effects = []
-            for r in results:
-                if isinstance(r, Exception):
-                    side_effects.append(r)
-                else:
-                    m = MagicMock()
-                    m.structured_content = r
-                    m.content = []
-                    side_effects.append(m)
-            ctx.fastmcp.call_tool = AsyncMock(side_effect=side_effects)
-        return ctx
+        ctx.fastmcp.call_tool = AsyncMock(side_effect=GhidraError("op 1 failed", "NotFound"))
+        fn = ToolTransform(pinned=PINNED_TOOLS)._get_batch_tool().fn
+        with pytest.raises(GhidraError, match="op 1 failed"):
+            await fn(ops=[BatchOperation(tool="x")], database="db", ctx=ctx)
 
-    def _op(self, tool: str, **params) -> BatchOperation:
-        return BatchOperation(tool=tool, params=params)
+    def test_batch_schema_caps_ops(self):
+        params = ToolTransform(pinned=PINNED_TOOLS)._get_batch_tool().parameters
+        assert params["properties"]["ops"]["maxItems"] == 100
+        assert params["properties"]["ops"]["minItems"] == 1
 
     @pytest.mark.asyncio
-    async def test_successful_operations(self):
-        """All operations succeed — succeeded count matches, no errors."""
-        ctx = self._make_ctx(results=[{"a": 1}, {"b": 2}])
-        transform = ToolTransform(pinned=PINNED_TOOLS)
-        fn = transform._get_batch_tool().fn
-        result = await fn(
-            operations=[
-                self._op("get_comment", address="0x1"),
-                self._op("get_comment", address="0x2"),
-            ],
-            database="db",
-            ctx=ctx,
-        )
-        assert result.succeeded == 2
-        assert result.failed == 0
-        assert not result.cancelled
-        assert len(result.results) == 2
-        assert result.results[0].result == {"a": 1}
-        assert result.results[1].result == {"b": 2}
+    async def test_call_refuses_internal_tools(self):
+        fn = ToolTransform(pinned=PINNED_TOOLS)._get_call_tool().fn
+        with pytest.raises(BackendError, match="cannot be called"):
+            await fn(tool="_batch", arguments={}, database="db", ctx=MagicMock())
 
     @pytest.mark.asyncio
-    async def test_error_collection(self):
-        """Partial failures raise BatchFailed with per-item results in payload."""
-        ctx = self._make_ctx(
-            results=[
-                GhidraError("bad address"),
-                {"ok": True},
-            ]
-        )
-        transform = ToolTransform(pinned=PINNED_TOOLS)
-        fn = transform._get_batch_tool().fn
-        with pytest.raises(BackendError, match="BatchFailed") as exc_info:
-            await fn(
-                operations=[
-                    self._op("get_comment", address="bad"),
-                    self._op("get_comment", address="0x1"),
-                ],
-                database="db",
-                stop_on_error=False,
-                ctx=ctx,
-            )
-        # The error payload contains the full BatchResult as JSON inside the "error" key.
-        envelope = json.loads(str(exc_info.value))
-        payload = json.loads(envelope["error"])
-        assert payload["succeeded"] == 1
-        assert payload["failed"] == 1
-
-    @pytest.mark.asyncio
-    async def test_stop_on_error(self):
-        """stop_on_error=True stops after first failure and raises BatchFailed."""
-        ctx = self._make_ctx(
-            results=[
-                GhidraError("fail"),
-                {"ok": True},
-            ]
-        )
-        transform = ToolTransform(pinned=PINNED_TOOLS)
-        fn = transform._get_batch_tool().fn
-        with pytest.raises(BackendError, match="BatchFailed"):
-            await fn(
-                operations=[
-                    self._op("get_comment", address="bad"),
-                    self._op("get_comment", address="0x1"),
-                ],
-                database="db",
-                stop_on_error=True,
-                ctx=ctx,
-            )
-
-    @pytest.mark.asyncio
-    async def test_database_auto_injection(self):
-        """database is auto-injected into operation params."""
-        ctx = self._make_ctx(results=[{"ok": True}])
-        transform = ToolTransform(pinned=PINNED_TOOLS)
-        fn = transform._get_batch_tool().fn
-        await fn(
-            operations=[self._op("get_comment", address="0x1")],
-            database="mydb",
-            ctx=ctx,
-        )
-        call_args = ctx.fastmcp.call_tool.call_args
-        assert call_args[0][1]["database"] == "mydb"
-
-    @pytest.mark.asyncio
-    async def test_database_explicit_override(self):
-        """Explicit database in params is preserved (not overwritten)."""
-        ctx = self._make_ctx(results=[{"ok": True}])
-        transform = ToolTransform(pinned=PINNED_TOOLS)
-        fn = transform._get_batch_tool().fn
-        await fn(
-            operations=[
-                BatchOperation(tool="get_comment", params={"address": "0x1", "database": "other"})
-            ],
-            database="mydb",
-            ctx=ctx,
-        )
-        call_args = ctx.fastmcp.call_tool.call_args
-        assert call_args[0][1]["database"] == "other"
-
-    @pytest.mark.asyncio
-    @pytest.mark.parametrize(
-        "tool_name", sorted(MANAGEMENT_TOOLS - {"save_database", "list_databases"})
-    )
-    async def test_blocks_lifecycle_management_tools(self, tool_name: str):
-        """Lifecycle tools (open/close/wait/list_targets) are blocked inside batch."""
-        ctx = self._make_ctx()
-        transform = ToolTransform(pinned=PINNED_TOOLS)
-        fn = transform._get_batch_tool().fn
-        with pytest.raises(BackendError, match="BatchFailed"):
-            await fn(
-                operations=[self._op(tool_name)],
-                database="db",
-                ctx=ctx,
-            )
-
-    @pytest.mark.asyncio
-    @pytest.mark.parametrize("tool_name", ["save_database", "list_databases"])
-    async def test_allows_save_and_list_databases(self, tool_name: str):
-        """save_database and list_databases are useful inside batch."""
-        ctx = self._make_ctx()
-        ctx.fastmcp.call_tool.return_value = MagicMock(
-            content=[MagicMock(type="text", text='{"ok": true}')],
-            isError=False,
-        )
-        transform = ToolTransform(pinned=PINNED_TOOLS)
-        fn = transform._get_batch_tool().fn
-        result = await fn(
-            operations=[self._op(tool_name)],
-            database="db",
-            ctx=ctx,
-        )
-        assert result.failed == 0
-        assert result.succeeded == 1
-
-    @pytest.mark.asyncio
-    @pytest.mark.parametrize("tool_name", sorted(META_TOOLS))
-    async def test_blocks_meta_tools(self, tool_name: str):
-        """Meta-tools (search_tools, execute, batch, call) are blocked inside batch."""
-        ctx = self._make_ctx()
-        transform = ToolTransform(pinned=PINNED_TOOLS)
-        fn = transform._get_batch_tool().fn
-        with pytest.raises(BackendError, match="BatchFailed"):
-            await fn(
-                operations=[self._op(tool_name)],
-                database="db",
-                ctx=ctx,
-            )
-
-    @pytest.mark.asyncio
-    async def test_progress_reporting(self):
-        """report_progress is called for each operation except the last.
-
-        The final progress(N, N) is skipped to avoid a race with the
-        JSON-RPC response — clients that receive the response first will
-        see an unknown progressToken and may tear down the connection.
-        """
-        ctx = self._make_ctx(results=[{"a": 1}, {"b": 2}, {"c": 3}])
-        transform = ToolTransform(pinned=PINNED_TOOLS)
-        fn = transform._get_batch_tool().fn
-        await fn(
-            operations=[self._op("t1"), self._op("t2"), self._op("t3")],
-            database="db",
-            ctx=ctx,
-        )
-        calls = ctx.report_progress.call_args_list
-        assert len(calls) == 2
-        assert calls[0][0] == (1, 3)
-        assert calls[1][0] == (2, 3)
-
-    @pytest.mark.asyncio
-    async def test_empty_operations(self):
-        """Empty operations list returns zero counts."""
-        ctx = self._make_ctx()
-        transform = ToolTransform(pinned=PINNED_TOOLS)
-        fn = transform._get_batch_tool().fn
-        result = await fn(operations=[], database="db", ctx=ctx)
-        assert result.succeeded == 0
-        assert result.failed == 0
-        assert len(result.results) == 0
-        assert not result.cancelled
-
-    @pytest.mark.asyncio
-    async def test_without_ctx_raises_backend_error(self):
-        """batch with ctx=None raises BackendError."""
-        transform = ToolTransform(pinned=PINNED_TOOLS)
-        fn = transform._get_batch_tool().fn
-        with pytest.raises(BackendError, match="batch requires an MCP context"):
-            await fn(operations=[], database="db", ctx=None)
-
-    @pytest.mark.asyncio
-    async def test_client_cancellation_returns_partial_results(self):
-        """asyncio.CancelledError mid-batch yields cancelled=True with results so far.
-
-        CancelledError is a ``BaseException`` (not ``Exception``) on Py 3.8+
-        so it bypasses the inner per-item handler and is caught by the outer
-        ``except asyncio.CancelledError`` in ``batch``.  Bypass the helper
-        (which only supports ``Exception`` side-effects) and build the mock
-        directly.
-        """
-        ctx = MagicMock()
-        ctx.fastmcp = MagicMock()
-        ctx.report_progress = AsyncMock()
-        first = MagicMock()
-        first.structured_content = {"first": True}
-        first.content = []
-        ctx.fastmcp.call_tool = AsyncMock(side_effect=[first, asyncio.CancelledError()])
-
-        transform = ToolTransform(pinned=PINNED_TOOLS)
-        fn = transform._get_batch_tool().fn
-        result = await fn(
-            operations=[self._op("tool_a"), self._op("tool_b"), self._op("tool_c")],
-            database="db",
-            ctx=ctx,
-        )
-        assert result.cancelled is True
-        assert result.succeeded == 1
-        # Third operation never ran.
-        assert len(result.results) == 1
-        assert result.results[0].tool == "tool_a"
-
-    @pytest.mark.asyncio
-    async def test_result_indices_match_input_order(self):
-        """Result indices correspond to input operation positions."""
-        ctx = self._make_ctx(results=[{"first": True}, {"second": True}])
-        transform = ToolTransform(pinned=PINNED_TOOLS)
-        fn = transform._get_batch_tool().fn
-        result = await fn(
-            operations=[self._op("tool_a"), self._op("tool_b")],
-            database="db",
-            ctx=ctx,
-        )
-        assert result.results[0].index == 0
-        assert result.results[0].tool == "tool_a"
-        assert result.results[1].index == 1
-        assert result.results[1].tool == "tool_b"
+    async def test_internal_tools_hidden_without_tool_search(self):
+        transform = ToolTransform(pinned=PINNED_TOOLS, enable_tool_search=False)
+        internal = MagicMock()
+        internal.name = "_batch"
+        public = MagicMock()
+        public.name = "decompile_function"
+        names = [t.name for t in await transform.transform_tools([internal, public])]
+        assert "_batch" not in names
+        assert "decompile_function" in names
 
 
 # ---------------------------------------------------------------------------
@@ -3032,26 +2578,6 @@ class TestMetaToolDisableFlags:
         assert "execute" in names
 
     @pytest.mark.asyncio
-    async def test_execute_description_omits_batch_when_disabled(self):
-        """When batch is disabled, execute's description must not advertise it."""
-        transform = ToolTransform(pinned=PINNED_TOOLS, enable_batch=False)
-        out = await transform.transform_tools([])
-        execute_tool = next(t for t in out if t.name == "execute")
-        desc = execute_tool.description or ""
-        assert "batch** meta-tool" not in desc
-        assert "search_tools, get_schema, execute, batch" not in desc
-        assert "search_tools, get_schema, execute" in desc
-
-    @pytest.mark.asyncio
-    async def test_execute_description_mentions_batch_when_enabled(self):
-        transform = ToolTransform(pinned=PINNED_TOOLS, enable_batch=True)
-        out = await transform.transform_tools([])
-        execute_tool = next(t for t in out if t.name == "execute")
-        desc = execute_tool.description or ""
-        assert "batch** meta-tool" in desc
-        assert "search_tools, get_schema, execute, batch" in desc
-
-    @pytest.mark.asyncio
     async def test_disable_tool_search_exposes_all_tools(self):
         async def hidden_tool(x: int) -> int:
             return x
@@ -3089,30 +2615,6 @@ class TestMetaToolDisableFlags:
         names = [t.name for t in await transform.transform_tools([])]
         assert "search_tools" in names
         assert "get_schema" in names
-
-    @pytest.mark.asyncio
-    async def test_execute_description_omits_tool_search_when_disabled(self):
-        """When tool_search is disabled, execute description omits search_tools/get_schema."""
-        transform = ToolTransform(pinned=PINNED_TOOLS, enable_tool_search=False)
-        out = await transform.transform_tools([])
-        execute_tool = next(t for t in out if t.name == "execute")
-        desc = execute_tool.description or ""
-        assert "search_tools" not in desc
-        assert "get_schema" not in desc
-        assert "execute, batch, call" in desc
-
-    @pytest.mark.asyncio
-    async def test_execute_description_all_disabled_except_execute(self):
-        """When both batch and tool_search are disabled, only execute and call remain."""
-        transform = ToolTransform(pinned=PINNED_TOOLS, enable_tool_search=False, enable_batch=False)
-        out = await transform.transform_tools([])
-        execute_tool = next(t for t in out if t.name == "execute")
-        desc = execute_tool.description or ""
-        assert "search_tools" not in desc
-        assert "get_schema" not in desc
-        assert "batch** meta-tool" not in desc
-        assert "use `batch`" not in desc
-        assert "execute, call" in desc
 
 
 class TestBuildInstructions:
