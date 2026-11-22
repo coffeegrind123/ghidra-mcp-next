@@ -102,10 +102,7 @@ class Session:
                 )
 
             if run_auto_analysis:
-                from ghidra.base.project import GhidraProject  # noqa: PLC0415
-
-                # Static helper: re-analyzes everything in its own transaction.
-                GhidraProject.analyze(prog)
+                analyze(prog)
 
         except GhidraError:
             if project is not None:
@@ -313,6 +310,19 @@ class Session:
 
 # Module-level singleton
 session = Session()
+
+
+def analyze(program) -> None:
+    """Run full auto-analysis on *program* inside its own transaction.
+
+    Not ``GhidraProject.analyze``: it opens no transaction and relied on the
+    one ``GhidraProject`` holds open, so on a cleanly opened program every
+    analyzer write fails with NoTransactionException and analysis silently
+    finds a fraction of the code.
+    """
+    import pyghidra  # noqa: PLC0415
+
+    pyghidra.analyze(program)
 
 
 def _check_language(language: str, compiler_spec: str) -> None:

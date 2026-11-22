@@ -20,7 +20,7 @@ from re_mcp_ghidra.helpers import (
     paginate_iter,
     resolve_address,
 )
-from re_mcp_ghidra.session import session
+from re_mcp_ghidra.session import analyze, session
 
 
 class ReanalyzeRangeResult(BaseModel):
@@ -68,7 +68,6 @@ def register(mcp: FastMCP) -> None:
             end_address: End of the range (exclusive).
         """
         from ghidra.app.cmd.disassemble import DisassembleCommand  # noqa: PLC0415
-        from ghidra.base.project import GhidraProject  # noqa: PLC0415
         from ghidra.util.task import TaskMonitor  # noqa: PLC0415
 
         program = session.program
@@ -89,7 +88,7 @@ def register(mcp: FastMCP) -> None:
             program.endTransaction(tx_id, False)
             raise GhidraError(f"Failed to reanalyze range: {e}", error_type="AnalysisFailed") from e
 
-        GhidraProject.analyze(program)
+        analyze(program)
 
         return ReanalyzeRangeResult(
             start=format_address(start.getOffset()),
@@ -106,11 +105,10 @@ def register(mcp: FastMCP) -> None:
         applications) to ensure the program is fully analyzed before querying.
         Returns a summary of database statistics after analysis finishes.
         """
-        from ghidra.base.project import GhidraProject  # noqa: PLC0415
 
         program = session.program
 
-        GhidraProject.analyze(program)
+        analyze(program)
 
         func_mgr = program.getFunctionManager()
         memory = program.getMemory()
