@@ -18,3 +18,8 @@ path = [
 ]
 SPDX-FileCopyrightText = "© 2026 Joe T. Sylve, Ph.D. <joe.sylve@gmail.com>"
 SPDX-License-Identifier = "MIT OR Apache-2.0"
+
+[[annotations]]
+path = ["context/**"]
+SPDX-FileCopyrightText = "© 2026 ghidra-mcp-next contributors"
+SPDX-License-Identifier = "MIT OR Apache-2.0"

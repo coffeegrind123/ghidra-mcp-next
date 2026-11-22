@@ -78,3 +78,8 @@ known-third-party = [
     "fastmcp", "mcp",
     "pyghidra", "ghidra", "java",
 ]
+
+[tool.pytest.ini_options]
+markers = [
+    "live: needs a real Ghidra (GHIDRA_INSTALL_DIR); one MCP session runs every scenario",
+]

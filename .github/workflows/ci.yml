@@ -8,6 +8,7 @@ on:
   push:
     branches: [main]
   pull_request:
+  workflow_dispatch:
 
 concurrency:
   group: ci-${{ github.ref }}
@@ -19,8 +20,8 @@ jobs:
     steps:
       - uses: actions/checkout@v6
       - uses: astral-sh/setup-uv@v6
-      - run: uv run ruff check packages/
-      - run: uv run ruff format --check packages/
+      - run: uv run ruff check packages/ tests/
+      - run: uv run ruff format --check packages/ tests/
 
   reuse:
     runs-on: ubuntu-latest
@@ -41,3 +42,40 @@ jobs:
       - uses: actions/checkout@v6
       - uses: astral-sh/setup-uv@v6
       - run: uv build --all-packages
+
+  # The server against a real Ghidra: transactions, rollback, undo, save,
+  # projects. tests/live is skipped in the plain test job (no Ghidra there).
+  live:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - ghidra: "12.0.3"
+            zip: ghidra_12.0.3_PUBLIC_20260210.zip
+          - ghidra: "12.1.4"
+            zip: ghidra_12.1.4_PUBLIC_20260921.zip
+    steps:
+      - uses: actions/checkout@v6
+      - uses: astral-sh/setup-uv@v6
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "21"
+      - name: Cache Ghidra
+        id: ghidra-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/ghidra
+          key: ghidra-${{ matrix.ghidra }}
+      - name: Download Ghidra ${{ matrix.ghidra }}
+        if: steps.ghidra-cache.outputs.cache-hit != 'true'
+        run: |
+          curl -fsSL -o /tmp/ghidra.zip \
+            "https://github.com/NationalSecurityAgency/ghidra/releases/download/Ghidra_${{ matrix.ghidra }}_build/${{ matrix.zip }}"
+          mkdir -p ~/ghidra && unzip -q /tmp/ghidra.zip -d ~/ghidra
+      - name: Live tests
+        run: |
+          export GHIDRA_INSTALL_DIR="$(ls -d ~/ghidra/ghidra_*_PUBLIC)"
+          uv run pytest tests/live -m live -v
