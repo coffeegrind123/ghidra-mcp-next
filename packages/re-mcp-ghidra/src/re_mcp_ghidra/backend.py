@@ -43,8 +43,9 @@ class GhidraBackend:
             transform=transform,
             intro="Ghidra binary analysis server with multi-database support.",
             file_path_detail=(
-                "file_path accepts raw binaries or existing Ghidra project files. "
-                "The binary must be in a writable directory."
+                "file_path is a binary (imported into <dir>/ghidra_projects/, so the "
+                "directory must be writable) or an existing project's .gpr file with "
+                "program set to the program's path inside it."
             ),
             uri_scheme="ghidra",
             resource_prefix="db",
@@ -74,8 +75,9 @@ class GhidraBackend:
             force_new: bool = False,
             language: str = "",
             compiler_spec: str = "",
+            program: str = "",
         ) -> dict:
-            """Open a binary for analysis with Ghidra.
+            """Open a binary, or a program in an existing Ghidra project.
 
             Returns immediately with ``"opening": true`` — call
             wait_for_analysis before using other tools on this database.
@@ -87,7 +89,11 @@ class GhidraBackend:
             project and all prior analysis.
 
             Args:
-                file_path: Path to the binary file.
+                file_path: Path to a binary (imported into a project next to it,
+                           ``<dir>/ghidra_projects/``), or to an existing project's
+                           ``.gpr`` file (then ``program`` is required).
+                program: Program path inside the ``.gpr`` project, e.g.
+                         ``/firmware/app.bin``. list_project_files lists them.
                 run_auto_analysis: Run Ghidra auto-analysis after opening.
                 keep_open: Keep other open databases (default True).
                 database_id: Custom ID (must match [a-z][a-z0-9_]{0,31}).
@@ -100,7 +106,11 @@ class GhidraBackend:
             """
             extra = {
                 k: v
-                for k, v in {"language": language, "compiler_spec": compiler_spec}.items()
+                for k, v in {
+                    "language": language,
+                    "compiler_spec": compiler_spec,
+                    "program": program,
+                }.items()
                 if v is not None and v != ""
             }
 
@@ -113,6 +123,28 @@ class GhidraBackend:
                 **extra,
             )
 
+        @mcp.tool(annotations={"title": "List Project Files", "readOnlyHint": True})
+        def list_project_files(project: str) -> dict:
+            """List the folders and files stored in an existing Ghidra project.
+
+            Use before open_database(file_path=<project>, program=<path>) to find
+            the program path. Reads the project's index directly, so it works
+            without opening anything and while no database is open.
+
+            Returns ``{"project", "folders": ["/", "/drivers"], "files":
+            ["/server.dll", "/drivers/usb.sys"]}``. For a shared (Ghidra Server)
+            project, server files that were never checked out are not listed.
+
+            Args:
+                project: Path to the project's ``.gpr`` file, e.g.
+                         ``/home/me/ghidra_projects/fw.gpr``.
+            """
+            from re_mcp_ghidra.project_index import (  # noqa: PLC0415
+                list_project_files as _list,
+            )
+
+            return _list(project)
+
     @staticmethod
     def register_prompts(mcp: FastMCP) -> None:
         from re_mcp_ghidra.prompts import register_all  # noqa: PLC0415
@@ -121,7 +153,13 @@ class GhidraBackend:
 
     @staticmethod
     def canonical_path(file_path: str, **kwargs: object) -> str:
-        return os.path.realpath(os.path.expanduser(file_path))
+        # One worker per program: a project file plus the program inside it.
+        # Path("/p/x.gpr:/dir/app").stem is "app", which becomes the database id.
+        path = os.path.realpath(os.path.expanduser(file_path))
+        program = str(kwargs.get("program") or "")
+        if path.endswith(".gpr") and program:
+            return f"{path}:{program if program.startswith('/') else '/' + program}"
+        return path
 
     @staticmethod
     def list_targets() -> dict:

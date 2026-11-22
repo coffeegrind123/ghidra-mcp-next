@@ -60,6 +60,7 @@ def register(mcp: FastMCP) -> None:
         force_new: bool = False,
         language: str = "",
         compiler_spec: str = "",
+        program: str = "",
     ) -> OpenDatabaseResult:
         """Open a binary for analysis. Called by the worker on supervisor's behalf."""
         result = session.open(
@@ -68,6 +69,7 @@ def register(mcp: FastMCP) -> None:
             force_new=force_new,
             language=language,
             compiler_spec=compiler_spec,
+            program=program,
         )
 
         program = session.program
