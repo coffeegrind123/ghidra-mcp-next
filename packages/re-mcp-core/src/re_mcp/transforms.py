@@ -406,6 +406,16 @@ DEFAULT_BLOCKED_TOOLS = frozenset(
 )
 
 
+async def _forward(ctx: Context, tool_name: str, params: dict[str, Any]) -> dict[str, Any]:
+    """Call the worker side of batch/execute, keeping the client alive meanwhile."""
+    task = asyncio.create_task(_safe_call_tool(ctx, tool_name, params))
+    await run_with_heartbeat(task, ctx)
+    result = task.result()
+    if not isinstance(result, dict):
+        raise BackendError(f"{tool_name} returned no data: {result!r}", error_type="Failed")
+    return result
+
+
 def _check_blocked(tool_name: str, caller: str) -> None:
     """Raise ``InvalidOperation`` if *tool_name* is in the blocked set.
 
@@ -827,7 +837,7 @@ class ToolTransform(CatalogTransform):
                 ),
             ] = "",
             ctx: Context | None = None,
-        ) -> dict[str, Any] | str:
+        ) -> dict[str, Any]:
             """Run Python 3 against the open program, in ONE transaction.
 
             For loops, computed changes and reads no single tool covers. The code
@@ -857,9 +867,7 @@ class ToolTransform(CatalogTransform):
                 "if_revision": None if if_revision == NO_REVISION else if_revision,
                 "operation_id": operation_id or None,
             }
-            task = asyncio.create_task(_safe_call_tool(ctx, "_execute", params))
-            await run_with_heartbeat(task, ctx)
-            return task.result()
+            return await _forward(ctx, "_execute", params)
 
         return Tool.from_function(fn=execute, name="execute")
 
@@ -932,7 +940,7 @@ class ToolTransform(CatalogTransform):
                 ),
             ] = False,
             ctx: Context | None = None,
-        ) -> dict[str, Any] | str:
+        ) -> dict[str, Any]:
             """Run several tool calls in order as ONE atomic change.
 
             Use for any set of 2+ calls: renaming N functions, setting N comments,
@@ -957,9 +965,7 @@ class ToolTransform(CatalogTransform):
                 "operation_id": operation_id or None,
                 "dry_run": dry_run,
             }
-            task = asyncio.create_task(_safe_call_tool(ctx, "_batch", params))
-            await run_with_heartbeat(task, ctx)
-            return task.result()
+            return await _forward(ctx, "_batch", params)
 
         return Tool.from_function(fn=batch, name="batch")
 
