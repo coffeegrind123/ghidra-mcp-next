@@ -158,7 +158,7 @@ def register(mcp: FastMCP) -> None:
 
     @mcp.tool(annotations=ANNO_MUTATE, tags={"modification"})
     @session.require_open
-    def make_code(
+    def disassemble_at(
         address: Address,
     ) -> MakeCodeResult:
         """Force bytes to be disassembled as code (single instruction, no function).
@@ -208,7 +208,7 @@ def register(mcp: FastMCP) -> None:
 
     @mcp.tool(annotations=ANNO_DESTRUCTIVE, tags={"modification"})
     @session.require_open
-    def undefine(
+    def clear_code_units(
         address: Address,
         size: int = 1,
     ) -> UndefineResult:

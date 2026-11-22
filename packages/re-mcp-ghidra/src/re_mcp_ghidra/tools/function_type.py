@@ -72,7 +72,7 @@ class SetCallingConventionResult(BaseModel):
 def register(mcp: FastMCP) -> None:
     @mcp.tool(annotations=ANNO_READ_ONLY, tags={"functions", "types"})
     @session.require_open
-    def get_function_type(
+    def get_function_prototype(
         address: Address,
     ) -> GetFunctionTypeResult:
         """Get the full type signature (prototype) of a function.
@@ -111,7 +111,7 @@ def register(mcp: FastMCP) -> None:
 
     @mcp.tool(annotations=ANNO_MUTATE, tags={"functions", "types"})
     @session.require_open
-    def set_function_type(
+    def set_function_prototype(
         address: Address,
         type_string: str,
     ) -> SetFunctionTypeResult:
@@ -207,7 +207,7 @@ def register(mcp: FastMCP) -> None:
         Args:
             address: Address or name of the function.
             convention: Calling convention name (e.g. "__cdecl", "__stdcall",
-                "__fastcall", "__thiscall"). Use get_function_type to see
+                "__fastcall", "__thiscall"). Use get_function_prototype to see
                 the current convention.
         """
         func = resolve_function(address)

@@ -86,7 +86,7 @@ def register(mcp: FastMCP) -> None:
 
     @mcp.tool(annotations=ANNO_READ_ONLY, tags={"data"})
     @session.require_open
-    def get_segments(
+    def list_memory_blocks(
         offset: Offset = 0,
         limit: Limit = 100,
     ) -> dict:

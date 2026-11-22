@@ -285,7 +285,6 @@ The full tool catalog spans these areas:
 - **Register Variables** — register-to-name mappings within functions
 - **Signatures** — Function ID and data type archives
 - **Export** — batch decompilation/disassembly, output file generation
-- **Snapshots** — take, list, and restore database snapshots
 - **Processor** — architecture info, register names, instruction classification
 - **Bookmarks** — marked-position management
 - **Colors** — address/function coloring

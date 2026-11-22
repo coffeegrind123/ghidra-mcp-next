@@ -113,7 +113,7 @@ def _token_to_dict(token, depth: int) -> dict | None:
 def register(mcp: FastMCP) -> None:
     @mcp.tool(annotations=ANNO_READ_ONLY, tags={"decompiler"})
     @session.require_open
-    def get_ctree(
+    def get_decompiler_tokens(
         function_address: Address,
         depth: Annotated[int, Field(description="Maximum tree depth (1-10).", ge=1, le=10)] = 3,
     ) -> GetCtreeResult:
@@ -147,7 +147,7 @@ def register(mcp: FastMCP) -> None:
 
     @mcp.tool(annotations=ANNO_READ_ONLY, tags={"decompiler", "analysis"})
     @session.require_open
-    def find_ctree_calls(
+    def find_decompiled_calls(
         function_address: Address,
         callee_name: str = "",
     ) -> FindCtreeCallsResult:

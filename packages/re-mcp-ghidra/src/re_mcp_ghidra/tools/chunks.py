@@ -55,7 +55,7 @@ class RemoveFunctionTailResult(BaseModel):
 def register(mcp: FastMCP) -> None:
     @mcp.tool(annotations=ANNO_READ_ONLY, tags={"functions"})
     @session.require_open
-    def list_function_chunks(
+    def list_function_ranges(
         address: Address,
     ) -> ListFunctionChunksResult:
         """List all address ranges (chunks) in a function body.
@@ -92,7 +92,7 @@ def register(mcp: FastMCP) -> None:
 
     @mcp.tool(annotations=ANNO_MUTATE, tags={"functions"})
     @session.require_open
-    def append_function_tail(
+    def add_function_range(
         function_address: Address,
         start: Address,
         end: Address,
@@ -145,7 +145,7 @@ def register(mcp: FastMCP) -> None:
 
     @mcp.tool(annotations=ANNO_DESTRUCTIVE, tags={"functions"})
     @session.require_open
-    def remove_function_tail(
+    def remove_function_range(
         function_address: Address,
         tail_address: Address,
     ) -> RemoveFunctionTailResult:

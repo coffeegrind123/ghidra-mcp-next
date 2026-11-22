@@ -125,7 +125,7 @@ def register(mcp: FastMCP) -> None:
 
     @mcp.tool(annotations=ANNO_READ_ONLY, tags={"types"})
     @session.require_open
-    def list_local_types(
+    def list_data_types(
         offset: Offset = 0,
         limit: Limit = 100,
         filter_pattern: FilterPattern = "",

@@ -25,7 +25,7 @@ class ParseSourceResult(BaseModel):
 def register(mcp: FastMCP) -> None:
     @mcp.tool(annotations=ANNO_MUTATE, tags={"types"})
     @session.require_open
-    def parse_source_declarations(
+    def parse_c_source(
         source: str,
         language: str = "c",
     ) -> ParseSourceResult:

@@ -87,7 +87,7 @@ def register(mcp: FastMCP) -> None:
     ) -> AssembleResult:
         """Assemble an instruction at an address without patching (dry-run).
 
-        Use patch_asm to assemble and write in one step.
+        Use patch_instruction to assemble and write in one step.
 
         Args:
             address: Address where the instruction should be assembled.
@@ -108,7 +108,7 @@ def register(mcp: FastMCP) -> None:
 
     @mcp.tool(annotations=ANNO_DESTRUCTIVE, tags={"disassembly", "assembler"})
     @session.require_open
-    def patch_asm(
+    def patch_instruction(
         address: Address,
         instruction: str,
     ) -> PatchAsmResult:

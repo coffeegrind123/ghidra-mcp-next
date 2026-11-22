@@ -90,7 +90,7 @@ def _resolve_block(addr):
 def register(mcp: FastMCP) -> None:
     @mcp.tool(annotations=ANNO_MUTATE, tags={"segments"})
     @session.require_open
-    def create_segment(
+    def create_memory_block(
         name: str,
         start_address: Address,
         end_address: Address,
@@ -148,7 +148,7 @@ def register(mcp: FastMCP) -> None:
 
     @mcp.tool(annotations=ANNO_DESTRUCTIVE, tags={"segments"})
     @session.require_open
-    def delete_segment(
+    def delete_memory_block(
         address: Address,
     ) -> DeleteSegmentResult:
         """Delete the memory block containing the given address.
@@ -188,7 +188,7 @@ def register(mcp: FastMCP) -> None:
 
     @mcp.tool(annotations=ANNO_MUTATE, tags={"segments"})
     @session.require_open
-    def set_segment_name(
+    def rename_memory_block(
         address: Address,
         new_name: str,
     ) -> SetSegmentNameResult:
@@ -218,7 +218,7 @@ def register(mcp: FastMCP) -> None:
 
     @mcp.tool(annotations=ANNO_MUTATE, tags={"segments"})
     @session.require_open
-    def set_segment_permissions(
+    def set_memory_block_permissions(
         address: Address,
         permissions: str,
     ) -> SetSegmentPermissionsResult:

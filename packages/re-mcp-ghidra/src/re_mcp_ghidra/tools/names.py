@@ -66,7 +66,7 @@ def register(mcp: FastMCP) -> None:
 
     @mcp.tool(annotations=ANNO_MUTATE, tags={"names"})
     @session.require_open
-    def rename_address(address: Address, new_name: str) -> RenameResult:
+    def rename_symbol(address: Address, new_name: str) -> RenameResult:
         """Rename a label/symbol at an address."""
         from ghidra.program.model.symbol import SourceType  # noqa: PLC0415
 

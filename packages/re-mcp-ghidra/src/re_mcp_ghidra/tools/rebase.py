@@ -29,7 +29,7 @@ class RebaseProgramResult(BaseModel):
 def register(mcp: FastMCP) -> None:
     @mcp.tool(annotations=ANNO_DESTRUCTIVE, tags={"segments"})
     @session.require_open
-    def rebase_program(delta: str) -> RebaseProgramResult:
+    def set_image_base(delta: str) -> RebaseProgramResult:
         """Shift all addresses by a signed delta (destructive, global).
 
         Computes a new image base by adding the delta to the current base

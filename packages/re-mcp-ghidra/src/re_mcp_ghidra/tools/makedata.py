@@ -97,7 +97,7 @@ def _get_data_type(type_name: str):
 def register(mcp: FastMCP) -> None:
     @mcp.tool(annotations=ANNO_MUTATE, tags={"modification"})
     @session.require_open
-    def make_data(
+    def create_data(
         address: Address,
         data_type: Literal["byte", "word", "dword", "qword", "float", "double"],
         count: Annotated[
@@ -152,7 +152,7 @@ def register(mcp: FastMCP) -> None:
 
     @mcp.tool(annotations=ANNO_MUTATE, tags={"modification"})
     @session.require_open
-    def make_string(
+    def create_string(
         address: Address,
         length: int = 0,
         string_type: str = "c",
@@ -224,7 +224,7 @@ def register(mcp: FastMCP) -> None:
 
     @mcp.tool(annotations=ANNO_MUTATE, tags={"modification"})
     @session.require_open
-    def make_array(
+    def create_array(
         address: Address,
         element_size: int,
         count: Annotated[int, Field(description="Number of elements in the array.", ge=1)],

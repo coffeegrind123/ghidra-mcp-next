@@ -72,8 +72,8 @@ Function prototypes and calling conventions.
 
 | Tool | Description |
 |------|-------------|
-| `get_function_type` | Get function signature, return type, calling convention, and parameters. |
-| `set_function_type` | Set a function's prototype from a C declaration string. |
+| `get_function_prototype` | Get function signature, return type, calling convention, and parameters. |
+| `set_function_prototype` | Set a function's prototype from a C declaration string. |
 | `set_function_calling_convention` | Change calling convention (cdecl, stdcall, fastcall, thiscall, pascal). |
 
 ## Function Flags
@@ -83,7 +83,7 @@ Function flags, byte flags, and hidden ranges.
 | Tool | Description |
 |------|-------------|
 | `set_function_flags` | Set function flags: library, thunk, noreturn, hidden. Only provided flags are changed. |
-| `get_byte_flags` | Get flags/status at an address: code/data/head/tail indicators, xrefs, names, comments, item size. |
+| `get_code_unit` | Get flags/status at an address: code/data/head/tail indicators, xrefs, names, comments, item size. |
 | `add_hidden_range` | Create a hidden (collapsed) range with a description (IDA). |
 | `delete_hidden_range` | Delete a hidden range (IDA). |
 | `get_hidden_ranges` | List all hidden ranges. Paginated (IDA). |
@@ -94,9 +94,9 @@ Function chunks (non-contiguous tail regions).
 
 | Tool | Description |
 |------|-------------|
-| `list_function_chunks` | List all chunks of a function. |
-| `append_function_tail` | Append a tail region to a function. |
-| `remove_function_tail` | Remove a tail from a function. |
+| `list_function_ranges` | List all chunks of a function. |
+| `add_function_range` | Append a tail region to a function. |
+| `remove_function_range` | Remove a tail from a function. |
 | `set_tail_owner` | Change which function owns a tail chunk (IDA). |
 
 ## Stack Frames
@@ -136,10 +136,10 @@ String extraction, pattern searching, and string-to-code reference lookup.
 | Tool | Description |
 |------|-------------|
 | `rebuild_string_list` | Rebuild the string list from scratch. Call after patching bytes or defining new data that may create or destroy strings (IDA). |
-| `get_strings` | Extract strings from the binary with optional minimum length and regex filter. Supports batch mode for multiple patterns in one pass. Paginated. |
+| `list_strings` | Extract strings from the binary with optional minimum length and regex filter. Supports batch mode for multiple patterns in one pass. Paginated. |
 | `find_code_by_string` | Find functions that reference strings matching a regex. Combines string search, xref lookup, and function resolution in one call. |
 | `search_bytes` | Search for a hex byte pattern. Spaces separate bytes; wildcards (`??`) are supported in IDA only. |
-| `search_text` | Search for text in disassembly mnemonics and operands (not string data — use `get_strings` for that). |
+| `search_text` | Search for text in disassembly mnemonics and operands (not string data — use `list_strings` for that). |
 | `find_immediate` | Find instructions with a specific immediate operand value (IDA). |
 
 ## Data
@@ -149,7 +149,7 @@ Read raw bytes, list segments, and read pointer tables.
 | Tool | Description |
 |------|-------------|
 | `read_bytes` | Read raw bytes at an address (max 4096). Returns hex and formatted hex dump. |
-| `get_segments` | List all segments with name, bounds, class, permissions, and bitness. Paginated. |
+| `list_memory_blocks` | List all segments with name, bounds, class, permissions, and bitness. Paginated. |
 | `read_pointer_table` | Read an array of pointers from the database. Resolves names and auto-detects strings at target addresses. Useful for vtables, dispatch tables, and token dictionaries (IDA). |
 
 ## Data Definition
@@ -158,9 +158,9 @@ Define data types at addresses.
 
 | Tool | Description |
 |------|-------------|
-| `make_data` | Define data at an address as byte, word, dword, qword, float, or double. Pass count > 1 to create an array. |
-| `make_string` | Define a string at an address. Supports C (ASCII), UTF-16, and UTF-32 encodings. Length 0 (default) auto-detects null terminator. |
-| `make_array` | Create an array at an address with a given element size and count. |
+| `create_data` | Define data at an address as byte, word, dword, qword, float, or double. Pass count > 1 to create an array. |
+| `create_string` | Define a string at an address. Supports C (ASCII), UTF-16, and UTF-32 encodings. Length 0 (default) auto-detects null terminator. |
+| `create_array` | Create an array at an address with a given element size and count. |
 
 ## Imports and Exports
 
@@ -168,9 +168,9 @@ Imported functions, exported symbols, and entry points.
 
 | Tool | Description |
 |------|-------------|
-| `get_imports` | List imported functions, optionally filtered by module name. Paginated. |
-| `get_exports` | List exported symbols. Paginated. |
-| `get_entry_points` | List entry points. Paginated. |
+| `list_imports` | List imported functions, optionally filtered by module name. Paginated. |
+| `list_exports` | List exported symbols. Paginated. |
+| `list_entry_points` | List entry points. Paginated. |
 | `set_import_name` | Set the name of an import entry (IDA). |
 | `set_import_ordinal` | Set the ordinal of an import entry (IDA). |
 
@@ -203,7 +203,7 @@ Global naming and labeling.
 
 | Tool | Description |
 |------|-------------|
-| `rename_address` | Rename any address (globals, labels, etc.). |
+| `rename_symbol` | Rename any address (globals, labels, etc.). |
 | `list_names` | List all named locations with optional regex filter. Supports batch mode for multiple patterns in one pass. Paginated. |
 
 ## Demangling
@@ -265,8 +265,8 @@ Decompiler AST (ctree) exploration and pattern matching.
 
 | Tool | Description |
 |------|-------------|
-| `get_ctree` | Get the decompiler AST for a function. `depth` is 1-10 (default 3). |
-| `find_ctree_calls` | Find function calls in the AST, optionally filtered by callee name. |
+| `get_decompiler_tokens` | Get the decompiler AST for a function. `depth` is 1-10 (default 3). |
+| `find_decompiled_calls` | Find function calls in the AST, optionally filtered by callee name. |
 | `find_ctree_patterns` | Find patterns in the AST: calls, string_refs, comparisons, assignments, casts, pointer_derefs, or all (IDA). |
 
 ## Types
@@ -284,10 +284,10 @@ Local type management and type library operations.
 
 | Tool | Description |
 |------|-------------|
-| `list_local_types` | List all local types with ordinal, name, size, and classification. Paginated. |
-| `get_local_type` | Get full type details by name, including struct/union members. |
+| `list_data_types` | List all local types with ordinal, name, size, and classification. Paginated. |
+| `get_data_type` | Get full type details by name, including struct/union members. |
 | `parse_type_declaration` | Parse a C type declaration into the type library. |
-| `delete_local_type` | Delete a local type by name. |
+| `delete_data_type` | Delete a local type by name. |
 | `delete_local_type_by_ordinal` | Delete a local type by ordinal number (IDA). |
 | `apply_type_at_address` | Apply a named local type at an address. |
 
@@ -329,10 +329,10 @@ Segment creation and modification.
 
 | Tool | Description |
 |------|-------------|
-| `create_segment` | Create a new segment with name, bounds, class, bitness, and permissions. |
-| `delete_segment` | Delete a segment. |
-| `set_segment_name` | Rename a segment. |
-| `set_segment_permissions` | Change segment permissions (RWX format). |
+| `create_memory_block` | Create a new segment with name, bounds, class, bitness, and permissions. |
+| `delete_memory_block` | Delete a segment. |
+| `rename_memory_block` | Rename a segment. |
+| `set_memory_block_permissions` | Change segment permissions (RWX format). |
 | `set_segment_bitness` | Change segment bitness (0=16-bit, 1=32-bit, 2=64-bit) (IDA). |
 | `set_segment_class` | Change the segment class string (IDA). |
 
@@ -343,7 +343,7 @@ Segment moving and program rebasing.
 | Tool | Description |
 |------|-------------|
 | `move_segment` | Move a segment to a new start address (IDA). |
-| `rebase_program` | Rebase the entire program by a delta. |
+| `set_image_base` | Rebase the entire program by a delta. |
 
 ## Patching
 
@@ -353,8 +353,8 @@ Binary modification — byte patching, function/code creation, undefine.
 |------|-------------|
 | `patch_bytes` | Patch bytes at an address (creates an undo point). Returns old and new bytes. |
 | `create_function` | Create a function at an address with auto-detected boundaries. |
-| `make_code` | Mark bytes as a code instruction (without creating a function). |
-| `undefine` | Undefine items at an address, converting them back to raw bytes. |
+| `disassemble_at` | Mark bytes as a code instruction (without creating a function). |
+| `clear_code_units` | Undefine items at an address, converting them back to raw bytes. |
 
 ## Assembly
 
@@ -363,7 +363,7 @@ Instruction assembly and patching.
 | Tool | Description |
 |------|-------------|
 | `assemble_instruction` | Assemble a mnemonic string into bytes at an address (does not modify the database). |
-| `patch_asm` | Assemble an instruction and patch it into the database in one step (creates an undo point). |
+| `patch_instruction` | Assemble an instruction and patch it into the database in one step (creates an undo point). |
 
 ## Signatures
 
@@ -387,7 +387,7 @@ Source language parsing — import type declarations from source code.
 | Tool | Description |
 |------|-------------|
 | `get_source_parser` | Get the current source parser name (IDA). |
-| `parse_source_declarations` | Parse source declarations into types using a compiler parser. IDA supports C, C++, Objective-C, Swift, and Go; Ghidra supports C only. |
+| `parse_c_source` | Parse source declarations into types using a compiler parser. IDA supports C, C++, Objective-C, Swift, and Go; Ghidra supports C only. |
 
 ## Analysis
 
@@ -451,7 +451,7 @@ Bookmark (marked position) management.
 | Tool | Description |
 |------|-------------|
 | `set_bookmark` | Set a bookmark at an address with a description (slot -1 auto-assigns). |
-| `get_bookmarks` | List all bookmarks. Paginated. |
+| `list_bookmarks` | List all bookmarks. Paginated. |
 | `delete_bookmark` | Delete a bookmark by slot number. |
 
 ## Colors
@@ -479,8 +479,8 @@ Batch export tools, output file generation, and executable rebuilding.
 
 | Tool | Description |
 |------|-------------|
-| `export_all_pseudocode` | Batch decompile functions (default 50 per call). Optional regex filter. Paginated. |
-| `export_all_disassembly` | Batch export disassembly for functions (default 50 per call). Optional regex filter. Paginated. |
+| `decompile_functions` | Batch decompile functions (default 50 per call). Optional regex filter. Paginated. |
+| `disassemble_functions` | Batch export disassembly for functions (default 50 per call). Optional regex filter. Paginated. |
 | `generate_output_file` | Generate an IDA output file (asm, lst, map, dif, idc) (IDA). |
 | `generate_exe_file` | Rebuild an executable from the database (IDA). |
 
@@ -490,10 +490,10 @@ Directory tree (folder organization).
 
 | Tool | Description |
 |------|-------------|
-| `list_folders` | List folders and items in a directory tree. |
-| `create_folder` | Create a folder in a tree. |
-| `rename_folder` | Rename or move a folder. |
-| `delete_folder` | Delete an empty folder. |
+| `list_program_tree` | List folders and items in a directory tree. |
+| `create_program_tree_folder` | Create a folder in a tree. |
+| `rename_program_tree_folder` | Rename or move a folder. |
+| `delete_program_tree_folder` | Delete an empty folder. |
 
 ## Undo
 

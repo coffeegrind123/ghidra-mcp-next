@@ -90,7 +90,7 @@ def register(mcp: FastMCP) -> None:
 
     @mcp.tool(annotations=ANNO_READ_ONLY, tags={"navigation"})
     @session.require_open
-    def get_bookmarks(
+    def list_bookmarks(
         offset: Offset = 0,
         limit: Limit = 100,
     ) -> dict:

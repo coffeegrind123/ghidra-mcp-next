@@ -54,7 +54,7 @@ class StringCodeRef(BaseModel):
 def register(mcp: FastMCP) -> None:
     @mcp.tool(annotations=ANNO_READ_ONLY, tags={"search", "strings"})
     @session.require_open
-    def get_strings(
+    def list_strings(
         offset: Offset = 0,
         limit: Limit = 100,
         filter_pattern: FilterPattern = "",

@@ -150,7 +150,7 @@ def register(mcp: FastMCP) -> None:
 
     @mcp.tool(annotations=ANNO_READ_ONLY, tags={"functions"})
     @session.require_open
-    def get_byte_flags(
+    def get_code_unit(
         address: Address,
     ) -> ByteFlagsResult:
         """Get what is at an address: instruction, data, or undefined.

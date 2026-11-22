@@ -333,9 +333,7 @@ The tool modules are organized by domain. Some modules contain both read and wri
 - `xref_manip.py` — cross-reference manipulation
 - `entry_manip.py` — entry point addition, renaming, and forwarders
 - `makedata.py` — data type definition
-- `load_data.py` — loading bytes and additional binary files into database
 - `func_flags.py` — function flag and hidden range management
-- `regvars.py` — register variable add/delete/rename/comment
 - `srclang.py` — source declaration parsing via compiler parsers
 
 **Utility tools**:
@@ -343,9 +341,8 @@ The tool modules are organized by domain. Some modules contain both read and wri
 - `bookmarks.py` — bookmark management
 - `colors.py` — address/function coloring
 - `undo.py` — undo/redo
-- `snapshots.py` — database snapshot take/list/restore
 - `dirtree.py` — directory tree management
-- `signatures.py`, `sig_gen.py` — signature libraries and type libraries
+- `signatures.py` — Function ID and data type archives
 - `demangle.py` — C++ name demangling
 
 ## Resources

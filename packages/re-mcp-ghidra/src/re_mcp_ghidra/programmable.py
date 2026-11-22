@@ -61,7 +61,7 @@ NOT_IN_TRANSACTION = frozenset(
         "redo",
         "wait_for_analysis",
         "reanalyze_range",
-        "rebase_program",
+        "set_image_base",
         "_batch",
         "_execute",
     }

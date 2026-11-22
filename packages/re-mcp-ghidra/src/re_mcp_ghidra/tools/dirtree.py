@@ -105,7 +105,7 @@ def _resolve_module(root, path: str):
 def register(mcp: FastMCP) -> None:
     @mcp.tool(annotations=ANNO_READ_ONLY, tags={"metadata"})
     @session.require_open
-    def list_folders(tree: str = "Program Tree", path: str = "/") -> ListFoldersResult:
+    def list_program_tree(tree: str = "Program Tree", path: str = "/") -> ListFoldersResult:
         """List folders and fragments in Ghidra's program tree.
 
         Args:
@@ -142,7 +142,7 @@ def register(mcp: FastMCP) -> None:
 
     @mcp.tool(annotations=ANNO_MUTATE, tags={"metadata"})
     @session.require_open
-    def create_folder(tree: str, path: str) -> FolderActionResult:
+    def create_program_tree_folder(tree: str, path: str) -> FolderActionResult:
         """Create a new folder (module) in the program tree.
 
         Args:
@@ -172,7 +172,7 @@ def register(mcp: FastMCP) -> None:
 
     @mcp.tool(annotations=ANNO_MUTATE, tags={"metadata"})
     @session.require_open
-    def rename_folder(tree: str, old_path: str, new_path: str) -> FolderActionResult:
+    def rename_program_tree_folder(tree: str, old_path: str, new_path: str) -> FolderActionResult:
         """Rename a folder (module) in the program tree.
 
         The new_path should have the same parent; only the leaf name
@@ -204,7 +204,7 @@ def register(mcp: FastMCP) -> None:
 
     @mcp.tool(annotations=ANNO_DESTRUCTIVE, tags={"metadata"})
     @session.require_open
-    def delete_folder(tree: str, path: str) -> FolderActionResult:
+    def delete_program_tree_folder(tree: str, path: str) -> FolderActionResult:
         """Delete a folder (module) from the program tree.
 
         The folder must be empty (no children) to be deleted.

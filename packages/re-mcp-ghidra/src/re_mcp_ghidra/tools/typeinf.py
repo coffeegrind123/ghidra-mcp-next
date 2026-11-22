@@ -54,11 +54,11 @@ class DeleteLocalTypeResult(BaseModel):
 def register(mcp: FastMCP) -> None:
     @mcp.tool(annotations=ANNO_READ_ONLY, tags={"types"})
     @session.require_open
-    def get_local_type(name: str) -> GetLocalTypeResult:
+    def get_data_type(name: str) -> GetLocalTypeResult:
         """Get detailed type information including members by name.
 
         For structs/unions, returns all member details (name, type, offset,
-        size). For enums, returns name-value pairs. Use list_local_types
+        size). For enums, returns name-value pairs. Use list_data_types
         to browse available types.
 
         Args:
@@ -137,7 +137,7 @@ def register(mcp: FastMCP) -> None:
 
     @mcp.tool(annotations=ANNO_DESTRUCTIVE, tags={"types"})
     @session.require_open
-    def delete_local_type(name: str) -> DeleteLocalTypeResult:
+    def delete_data_type(name: str) -> DeleteLocalTypeResult:
         """Remove a data type from the program's data type manager.
 
         Irreversible -- the type declaration is removed. Use undo to

@@ -44,7 +44,7 @@ class EntryPointItem(BaseModel):
 def register(mcp: FastMCP) -> None:
     @mcp.tool(annotations=ANNO_READ_ONLY, tags={"metadata"})
     @session.require_open
-    def get_imports(
+    def list_imports(
         module_filter: str = "",
         offset: Offset = 0,
         limit: Limit = 100,
@@ -83,7 +83,7 @@ def register(mcp: FastMCP) -> None:
 
     @mcp.tool(annotations=ANNO_READ_ONLY, tags={"metadata"})
     @session.require_open
-    def get_exports(
+    def list_exports(
         offset: Offset = 0,
         limit: Limit = 100,
     ) -> dict:
@@ -116,14 +116,14 @@ def register(mcp: FastMCP) -> None:
 
     @mcp.tool(annotations=ANNO_READ_ONLY, tags={"metadata"})
     @session.require_open
-    def get_entry_points(
+    def list_entry_points(
         offset: Offset = 0,
         limit: Limit = 100,
     ) -> dict:
         """List binary entry points (main/start/exports).
 
         Entry points are addresses where execution may begin. For shared
-        libraries, get_exports is more complete (includes all exported symbols).
+        libraries, list_exports is more complete (includes all exported symbols).
 
         Args:
             offset: Pagination offset.

@@ -90,7 +90,7 @@ def _matching_functions(program, pattern: re.Pattern | None) -> list[tuple[objec
 def register(mcp: FastMCP) -> None:
     @mcp.tool(annotations=ANNO_READ_ONLY, tags={"export", "decompiler"})
     @session.require_open
-    def export_all_pseudocode(
+    def decompile_functions(
         filter_pattern: FilterPattern = "",
         offset: Offset = 0,
         limit: Limit = 50,
@@ -177,14 +177,14 @@ def register(mcp: FastMCP) -> None:
 
     @mcp.tool(annotations=ANNO_READ_ONLY, tags={"export", "disassembly"})
     @session.require_open
-    def export_all_disassembly(
+    def disassemble_functions(
         filter_pattern: FilterPattern = "",
         offset: Offset = 0,
         limit: Limit = 50,
     ) -> ExportDisassemblyResult:
         """Disassemble MANY functions in one call (paginated, regex-filterable).
 
-        Much faster than export_all_pseudocode (no decompilation needed),
+        Much faster than decompile_functions (no decompilation needed),
         but still processes multiple functions. Use filter_pattern to
         restrict output to relevant function groups.
 
