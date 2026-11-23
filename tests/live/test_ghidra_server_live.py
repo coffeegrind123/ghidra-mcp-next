@@ -13,10 +13,12 @@ through one MCP session.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import os
 import re
 import shutil
+import socket
 import subprocess
 import sys
 import time
@@ -29,7 +31,23 @@ from fastmcp.client.transports import StdioTransport
 
 from tests.live.test_ghidra_live import GHIDRA, SAMPLE, pytestmark  # noqa: F401
 
-SERVER_PORT = 13300  # base port; the server also uses the next two
+
+# The server binds a base port and the next two. A fixed base can still be held
+# by the previous run's server, so pick a free run of three.
+def _free_base_port(start: int = 13300, stop: int = 14000) -> int:
+    for base in range(start, stop, 3):
+        try:
+            with contextlib.ExitStack() as stack:
+                for port in range(base, base + 3):
+                    sock = stack.enter_context(socket.socket())
+                    sock.bind(("127.0.0.1", port))
+            return base
+        except OSError:
+            continue
+    raise RuntimeError("no free port range for the test Ghidra Server")
+
+
+SERVER_PORT = _free_base_port()
 USER = "tester"
 DEFAULT_PASSWORD = "changeme"  # what svrAdmin -add gives a new user
 SEED = Path(__file__).with_name("seed_server.py")
