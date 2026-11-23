@@ -109,7 +109,6 @@ def register(mcp: FastMCP) -> None:
             offset: Pagination offset (by function index).
             limit: Maximum number of functions to decompile.
         """
-        from ghidra.app.decompiler import DecompInterface  # noqa: PLC0415
         from ghidra.util.task import TaskMonitor  # noqa: PLC0415
 
         program = session.program
@@ -117,7 +116,7 @@ def register(mcp: FastMCP) -> None:
         candidates = _matching_functions(program, pattern)
         page = paginate(candidates, offset, limit)
 
-        decomp = DecompInterface()
+        decomp = session.decompiler()
         decomp.openProgram(program)
 
         results = []

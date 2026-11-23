@@ -364,10 +364,9 @@ def _normalised(func) -> list[str]:
 
 
 def _high_function(func):
-    from ghidra.app.decompiler import DecompInterface  # noqa: PLC0415
     from ghidra.util.task import TaskMonitor  # noqa: PLC0415
 
-    iface = DecompInterface()
+    iface = session.decompiler()
     iface.openProgram(session.program)
     try:
         res = iface.decompileFunction(func, DECOMPILE_TIMEOUT_S, TaskMonitor.DUMMY)

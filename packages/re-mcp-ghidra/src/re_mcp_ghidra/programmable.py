@@ -438,13 +438,12 @@ def _compile_body(code: str) -> Any:
 
 
 def _decompile(target: Any, timeout_s: int = 60) -> str:
-    from ghidra.app.decompiler import DecompInterface  # noqa: PLC0415
     from ghidra.util.task import ConsoleTaskMonitor  # noqa: PLC0415
 
     from re_mcp_ghidra.helpers import resolve_function  # noqa: PLC0415
 
     func = target if hasattr(target, "getEntryPoint") else resolve_function(str(target))
-    iface = DecompInterface()
+    iface = session.decompiler()
     iface.openProgram(session.program)
     try:
         res = iface.decompileFunction(func, timeout_s, ConsoleTaskMonitor())

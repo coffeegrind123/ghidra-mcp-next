@@ -140,13 +140,12 @@ def register(mcp: FastMCP) -> None:
         (entry address), name, variable_count and variables (name, type, is_param, size,
         storage).
         """
-        from ghidra.app.decompiler import DecompInterface  # noqa: PLC0415
         from ghidra.util.task import TaskMonitor  # noqa: PLC0415
 
         func = resolve_function(address)
         program = session.program
 
-        decomp = DecompInterface()
+        decomp = session.decompiler()
         decomp.openProgram(program)
         try:
             results = decomp.decompileFunction(func, 60, TaskMonitor.DUMMY)

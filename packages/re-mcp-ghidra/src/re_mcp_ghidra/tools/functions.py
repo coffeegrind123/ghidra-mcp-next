@@ -138,13 +138,12 @@ def register(mcp: FastMCP) -> None:
         DecompilationFailed when Ghidra's decompiler gives up (60 s timeout). Returns
         function_name, address (entry) and decompiled_code (the C text).
         """
-        from ghidra.app.decompiler import DecompInterface  # noqa: PLC0415
         from ghidra.util.task import TaskMonitor  # noqa: PLC0415
 
         func = resolve_function(address)
         program = session.program
 
-        decomp = DecompInterface()
+        decomp = session.decompiler()
         decomp.openProgram(program)
 
         try:

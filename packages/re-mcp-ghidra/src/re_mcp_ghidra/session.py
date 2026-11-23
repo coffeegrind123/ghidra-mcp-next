@@ -26,12 +26,35 @@ _PROJECT_SUBDIR = "ghidra_projects"
 _PROJECT_EXT = ".gpr"
 
 
+DECOMPILER_MAX_PAYLOAD_MB = 100
+
+
+class _SharedDecompiler:
+    """The shared DecompInterface, with per-call open/dispose made harmless."""
+
+    def __init__(self, iface) -> None:
+        self._iface = iface
+
+    def openProgram(self, program) -> bool:
+        return True
+
+    def dispose(self) -> None:
+        pass
+
+    def close(self) -> None:
+        self._iface.dispose()
+
+    def __getattr__(self, name: str):
+        return getattr(self._iface, name)
+
+
 class Session:
     """Singleton managing the Ghidra program session."""
 
     def __init__(self):
         self._program = None
         self._program_path = ""
+        self._decompiler = None
         self._consumer = None
         self._project = None
         self._project_location = None
@@ -207,6 +230,7 @@ class Session:
         from ghidra.util.task import TaskMonitor  # noqa: PLC0415
 
         path = self._program_path
+        self._dispose_decompiler()
         self._program.release(self._consumer)
         try:
             if while_closed is not None:
@@ -214,6 +238,39 @@ class Session:
         finally:
             self._program, self._consumer = pyghidra.consume_program(self._project, path)
             self._flat_api = FlatProgramAPI(self._program, TaskMonitor.DUMMY)
+
+    def decompiler(self):
+        """The worker's shared decompiler for the open program.
+
+        One instance, configured from the program's own decompiler options
+        (grabFromProgram), reused by every tool: starting a decompiler process
+        per call made each decompile ~14x slower, and without the program's
+        options some functions decompiled differently from Ghidra itself.
+        decompileFunction clears the instance's cache, so it stays correct
+        after edits and undo. Tools run on the main thread one at a time, so a
+        single instance needs no pool. Callers' dispose()/openProgram() are
+        no-ops; it is disposed when the program closes or is re-opened.
+        """
+        if self._decompiler is None:
+            from ghidra.app.decompiler import DecompileOptions, DecompInterface  # noqa: PLC0415
+
+            options = DecompileOptions()
+            options.grabFromProgram(self._program)
+            options.setMaxPayloadMBytes(DECOMPILER_MAX_PAYLOAD_MB)
+            iface = DecompInterface()
+            iface.setOptions(options)
+            if not iface.openProgram(self._program):
+                raise GhidraError(
+                    f"Decompiler failed to start: {iface.getLastMessage()}",
+                    error_type="DecompilationFailed",
+                )
+            self._decompiler = _SharedDecompiler(iface)
+        return self._decompiler
+
+    def _dispose_decompiler(self) -> None:
+        if self._decompiler is not None:
+            self._decompiler.close()
+            self._decompiler = None
 
     @property
     def domain_file(self):
@@ -325,6 +382,7 @@ class Session:
             ) from exc
         finally:
             try:
+                self._dispose_decompiler()
                 if self._program is not None:
                     self._program.release(self._consumer)
                 if self._project is not None:

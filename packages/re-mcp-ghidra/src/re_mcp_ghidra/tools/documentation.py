@@ -218,7 +218,6 @@ def register(mcp: FastMCP) -> None:
         known). External functions and thunks are skipped. Returns {items: [{address, name, score, missing}],
         total, offset, limit, has_more}.
         """
-        from ghidra.app.decompiler import DecompInterface  # noqa: PLC0415
 
         filt = compile_filter(filter_pattern)
         scored = []
@@ -236,7 +235,7 @@ def register(mcp: FastMCP) -> None:
         page = scored[offset : offset + limit]
         decomp = None
         if include_locals and page:
-            decomp = DecompInterface()
+            decomp = session.decompiler()
             decomp.openProgram(session.program)
         try:
             items = []

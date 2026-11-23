@@ -82,11 +82,10 @@ def _decompile(func):
 
     Raises :class:`GhidraError` on failure.
     """
-    from ghidra.app.decompiler import DecompInterface  # noqa: PLC0415
     from ghidra.util.task import TaskMonitor  # noqa: PLC0415
 
     program = session.program
-    decomp = DecompInterface()
+    decomp = session.decompiler()
     decomp.openProgram(program)
     try:
         results = decomp.decompileFunction(func, 60, TaskMonitor.DUMMY)
@@ -177,7 +176,6 @@ def register(mcp: FastMCP) -> None:
         with NotFound when old_name is not one of its symbols. Returns function (entry
         address), old_name and new_name.
         """
-        from ghidra.app.decompiler import DecompInterface  # noqa: PLC0415
         from ghidra.program.model.pcode import HighFunctionDBUtil  # noqa: PLC0415
         from ghidra.program.model.symbol import SourceType  # noqa: PLC0415
         from ghidra.util.task import TaskMonitor  # noqa: PLC0415
@@ -185,7 +183,7 @@ def register(mcp: FastMCP) -> None:
         func = resolve_function(function_address)
         program = session.program
 
-        decomp = DecompInterface()
+        decomp = session.decompiler()
         decomp.openProgram(program)
         try:
             results = decomp.decompileFunction(func, 60, TaskMonitor.DUMMY)
@@ -274,7 +272,6 @@ def register(mcp: FastMCP) -> None:
         function's decompiler symbols. Returns function (entry address), variable,
         old_type and new_type.
         """
-        from ghidra.app.decompiler import DecompInterface  # noqa: PLC0415
         from ghidra.program.model.pcode import HighFunctionDBUtil  # noqa: PLC0415
         from ghidra.program.model.symbol import SourceType  # noqa: PLC0415
         from ghidra.util.task import TaskMonitor  # noqa: PLC0415
@@ -287,7 +284,7 @@ def register(mcp: FastMCP) -> None:
 
         new_dt = _parse_data_type(new_type)
 
-        decomp = DecompInterface()
+        decomp = session.decompiler()
         decomp.openProgram(program)
         try:
             results = decomp.decompileFunction(func, 60, TaskMonitor.DUMMY)

@@ -51,11 +51,10 @@ class FindDecompiledCallsResult(BaseModel):
 
 def _decompile(func):
     """Decompile a function and return (DecompileResults, HighFunction)."""
-    from ghidra.app.decompiler import DecompInterface  # noqa: PLC0415
     from ghidra.util.task import TaskMonitor  # noqa: PLC0415
 
     program = session.program
-    decomp = DecompInterface()
+    decomp = session.decompiler()
     decomp.openProgram(program)
 
     try:
