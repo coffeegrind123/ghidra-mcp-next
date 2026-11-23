@@ -41,10 +41,20 @@ class FunctionDetail(BaseModel):
     entry_point: str = ""
 
 
+class DecompiledLine(BaseModel):
+    line: int = Field(description="Line number, from 1.")
+    address: str = Field(description="Address the line's code comes from, empty if none.")
+    text: str = Field(description="The line, with its indentation.")
+
+
 class DecompilationResult(BaseModel):
     function_name: str
     address: str
-    decompiled_code: str
+    decompiled_code: str = Field(description="The C text (only the requested lines when paged).")
+    total_lines: int = Field(default=0, description="Lines in the whole function.")
+    lines: list[DecompiledLine] = Field(
+        default_factory=list, description="With line_numbers: the requested lines."
+    )
 
 
 class Instruction(BaseModel):
@@ -66,6 +76,29 @@ class DeleteFunctionResult(BaseModel):
     address: str
     name: str
     status: str
+
+
+def decompiled_lines(results) -> list[DecompiledLine]:
+    """Numbered lines built from the decompiler's own line markup.
+
+    Built from the markup rather than by splitting getC(), so a line's number
+    and its address always describe the same tokens.
+    """
+    from ghidra.app.decompiler.component import DecompilerUtils  # noqa: PLC0415
+
+    out = []
+    for number, line in enumerate(DecompilerUtils.toLines(results.getCCodeMarkup()), 1):
+        tokens = list(line.getAllTokens())
+        text = " " * int(line.getIndent()) + "".join(str(t) for t in tokens)
+        addr = next((t.getMinAddress() for t in tokens if t.getMinAddress() is not None), None)
+        out.append(
+            DecompiledLine(
+                line=number,
+                address=format_address(addr.getOffset()) if addr is not None else "",
+                text=text.rstrip(),
+            )
+        )
+    return out
 
 
 def register(mcp: FastMCP) -> None:
@@ -131,41 +164,68 @@ def register(mcp: FastMCP) -> None:
 
     @mcp.tool(annotations=ANNO_READ_ONLY, tags={"functions", "decompiler"})
     @session.require_open
-    def decompile_function(address: Address) -> DecompilationResult:
+    def decompile_function(
+        address: Address,
+        line_numbers: Annotated[
+            bool,
+            Field(
+                description=(
+                    "Also return the code as numbered lines with each line's address "
+                    "(for set_decompiler_comment, or reading a long function in pages). "
+                    "Example: true"
+                )
+            ),
+        ] = False,
+        offset: Annotated[
+            int,
+            Field(ge=0, description="With line_numbers: first line to return, from 0. Example: 0"),
+        ] = 0,
+        limit: Annotated[
+            int,
+            Field(ge=0, description="With line_numbers: most lines; 0 for all. Example: 200"),
+        ] = 0,
+        timeout_s: Annotated[
+            int,
+            Field(ge=1, le=600, description="Decompiler time limit in seconds. Example: 120"),
+        ] = 60,
+    ) -> DecompilationResult:
         """Decompile the function containing an address to C pseudocode.
 
         Use disassemble_function for the machine instructions instead. Fails with
-        DecompilationFailed when Ghidra's decompiler gives up (60 s timeout). Returns
-        function_name, address (entry) and decompiled_code (the C text).
+        DecompilationFailed when Ghidra's decompiler gives up (raise timeout_s for
+        very large functions). Returns function_name, address (entry),
+        decompiled_code (the C text) and total_lines; with line_numbers, also lines
+        [{line, address, text}] for the requested page.
         """
         from ghidra.util.task import TaskMonitor  # noqa: PLC0415
 
         func = resolve_function(address)
-        program = session.program
+        results = session.decompiler().decompileFunction(func, timeout_s, TaskMonitor.DUMMY)
+        if not results.decompileCompleted():
+            error_msg = results.getErrorMessage() or "Decompilation failed"
+            raise GhidraError(error_msg, error_type="DecompilationFailed")
+        decomp_func = results.getDecompiledFunction()
+        if decomp_func is None:
+            raise GhidraError("Decompilation returned no result", error_type="DecompilationFailed")
 
-        decomp = session.decompiler()
-        decomp.openProgram(program)
-
-        try:
-            results = decomp.decompileFunction(func, 60, TaskMonitor.DUMMY)
-            if not results.decompileCompleted():
-                error_msg = results.getErrorMessage() or "Decompilation failed"
-                raise GhidraError(error_msg, error_type="DecompilationFailed")
-
-            decomp_func = results.getDecompiledFunction()
-            if decomp_func is None:
-                raise GhidraError(
-                    "Decompilation returned no result", error_type="DecompilationFailed"
-                )
-
-            code = decomp_func.getC()
+        code = str(decomp_func.getC())
+        entry = format_address(func.getEntryPoint().getOffset())
+        if not line_numbers:
             return DecompilationResult(
                 function_name=func.getName(),
-                address=format_address(func.getEntryPoint().getOffset()),
+                address=entry,
                 decompiled_code=code,
+                total_lines=len(code.splitlines()),
             )
-        finally:
-            decomp.dispose()
+        lines = decompiled_lines(results)
+        page = lines[offset : offset + limit] if limit else lines[offset:]
+        return DecompilationResult(
+            function_name=func.getName(),
+            address=entry,
+            decompiled_code="\n".join(ln.text for ln in page),
+            total_lines=len(lines),
+            lines=page,
+        )
 
     @mcp.tool(annotations=ANNO_READ_ONLY, tags={"functions"})
     @session.require_open
