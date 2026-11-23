@@ -12,7 +12,7 @@ signature and documentation.
 | Tool | Listed | What it does |
 |---|---|---|
 | `find_decompiled_calls` |  | Find function call sites in the decompiled output. |
-| `find_register_value` |  | Guess a register's constant value at an instruction from the instructions before it. |
+| `find_register_value` |  | Compute a register's constant value just before an instruction executes. |
 | `get_analysis_problems` |  | List analysis problems found by Ghidra (ERROR and WARNING bookmarks). |
 | `get_basic_blocks` |  | Get basic blocks of a function (CFG nodes with successor/predecessor lists). |
 | `get_cfg_edges` |  | Get CFG edges as (source, target) pairs (compact, for graph visualization). |
@@ -124,9 +124,12 @@ signature and documentation.
 | `batch` | yes | Run several tool calls in order as ONE atomic change. |
 | `call` | yes | Call any tool by name, including hidden tools not in the client tool list. |
 | `close_database` | yes | Close a database and stop its worker process. |
+| `create_repository` |  | Create a repository on a Ghidra Server; the configured user becomes its admin. |
 | `execute` | yes | Run Python 3 against the open program, in ONE transaction. |
 | `list_databases` | yes | List the databases open in this server. |
 | `list_project_files` | yes | List the folders and files stored in an existing Ghidra project. |
+| `list_repositories` |  | List the repositories on a Ghidra Server that the configured user can see. |
+| `list_repository_files` |  | List every folder and versioned file in a Ghidra Server repository. |
 | `list_targets` | yes | List the processor languages and compiler specs this Ghidra supports. |
 | `open_database` | yes | Open a binary, or a program in an existing Ghidra project. |
 | `save_database` | yes | Write the program's changes to its Ghidra project on disk. |
@@ -254,6 +257,7 @@ signature and documentation.
 
 | Tool | Listed | What it does |
 |---|---|---|
+| `add_to_repository` |  | Put the open program, with its analysis and annotations, under version control. |
 | `checkin_file` |  | Publish the checked-out program's changes as a new server version. |
 | `checkout_file` |  | Check out the open versioned program so it can be changed and saved. |
 | `get_version_history` |  | List every server version of the open program, oldest first. |

@@ -27,7 +27,9 @@ reduced to Ghidra only and rebuilt around transactions.
   code-mode profile.
 - **Projects and servers.** It opens binaries, programs inside existing `.gpr`
   projects, and programs on a Ghidra Server (`ghidra://host/repo/path`) with
-  checkout, checkin, history and undo-checkout.
+  checkout, checkin, history and undo-checkout. It lists and creates server
+  repositories, and `add_to_repository` puts a locally analyzed program (with
+  its annotations) under version control.
 - **Scripts.** `run_ghidra_script` runs existing Java or Python GhidraScripts in
   one transaction.
 
@@ -97,7 +99,8 @@ return n
 |---|---|
 | A binary | `file_path="/path/bin"`: imported into `/path/ghidra_projects/` |
 | An existing project | `file_path="/path/proj.gpr", program="/folder/prog"` (`list_project_files` lists them) |
-| A Ghidra Server | `file_path="ghidra://host[:port]/repository/folder/prog"`, then `checkout_file` before editing |
+| A Ghidra Server | `file_path="ghidra://host[:port]/repository/folder/prog"`, then `checkout_file` before editing (`list_repository_files` lists the paths) |
+| Share a local one | open it, then `add_to_repository(repository="ghidra://host/repository/folder")`; `create_repository` makes a new repository |
 
 Every tool is listed in [docs/tools.md](docs/tools.md).
 
