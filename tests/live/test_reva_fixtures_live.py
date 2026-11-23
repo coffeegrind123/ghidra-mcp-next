@@ -65,10 +65,14 @@ async def _dataflow(rec: Recorder) -> dict[str, Any]:
     out["fwd_call"] = await rec.tool(
         "analyze_dataflow", address=call["address"], direction="forward", max_steps=100
     )
-    zext = next(i["address"] for i in mhigh["items"] if "INT_ZEXT" in i["op"])
-    out["back_zext"] = await rec.tool("analyze_dataflow", address=zext, direction="backward")
-    zero = next(i["address"] for i in mhigh["items"] if "COPY (const, 0x0," in i["op"])
-    out["back_zero"] = await rec.tool("analyze_dataflow", address=zero, direction="backward")
+    # Backward from the transform call's own result, and from main's return 0.
+    # Found by opcode, not by the surrounding P-code, which differs across
+    # Ghidra versions (12.2 has no INT_ZEXT here).
+    out["back_call"] = await rec.tool(
+        "analyze_dataflow", address=call["address"], direction="backward"
+    )
+    ret = [i["address"] for i in mhigh["items"] if "RETURN" in i["op"]][-1]
+    out["back_zero"] = await rec.tool("analyze_dataflow", address=ret, direction="backward")
     return out
 
 
@@ -113,7 +117,7 @@ def test_forward_stops_at_call_argument(run):
 
 
 def test_backward_stops_at_call_result_and_constant(run):
-    (call,) = _stops(run["dataflow"]["back_zext"])
+    (call,) = _stops(run["dataflow"]["back_call"])
     assert call["kind"] == "call_result"
     assert call["target"].lstrip("_") == "transform"
     assert _stops(run["dataflow"]["back_zero"]) == [{"kind": "constant", "value": "0x0"}]

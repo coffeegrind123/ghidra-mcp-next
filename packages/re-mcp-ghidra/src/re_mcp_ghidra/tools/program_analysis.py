@@ -712,6 +712,10 @@ def register(mcp: FastMCP) -> None:
         addr = resolve_address(address)
         high = _high_function(func)
         start_vn = None
+        # An op whose inputs are all constants (RETURN 0 on Ghidra 12.2) still
+        # has a value to report: the last constant, since RETURN's input 0 is
+        # the return-address offset, not the value.
+        fallback = None
         it = high.getPcodeOps(addr)
         while it.hasNext() and start_vn is None:
             op = it.next()
@@ -723,6 +727,7 @@ def register(mcp: FastMCP) -> None:
                     continue
                 if not variable:
                     if vn.isConstant():
+                        fallback = vn
                         continue
                     start_vn = vn
                     break
@@ -735,6 +740,8 @@ def register(mcp: FastMCP) -> None:
                 if variable in names or variable.upper() in names:
                     start_vn = vn
                     break
+        if start_vn is None and not variable:
+            start_vn = fallback
         if start_vn is None:
             raise GhidraError(
                 f"No value {variable or '(any)'} in the decompiler's operations at "
