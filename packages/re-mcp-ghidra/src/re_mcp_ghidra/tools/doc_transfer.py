@@ -31,6 +31,7 @@ from re_mcp_ghidra.helpers import (
     FilterPattern,
     compile_filter,
     format_address,
+    read_memory,
     resolve_function,
 )
 from re_mcp_ghidra.session import session
@@ -536,6 +537,37 @@ def register(mcp: FastMCP) -> None:
             "limit": limit,
             "has_more": offset + limit < len(funcs),
         }
+
+    @mcp.tool(name="_function_facts", annotations=ANNO_READ_ONLY, tags={"internal"})
+    @session.require_open
+    def function_facts(addresses: list[str], body_bytes: bool = False) -> dict:
+        """Internal: per-function size, callee identities and body digest (diff_programs)."""
+        import hashlib  # noqa: PLC0415
+
+        from ghidra.util.task import TaskMonitor  # noqa: PLC0415
+
+        mem = session.program.getMemory()
+        items = []
+        for address in addresses:
+            func = resolve_function(address)
+            body = func.getBody()
+            fact = {
+                "address": format_address(func.getEntryPoint().getOffset()),
+                "size": int(body.getNumAddresses()),
+                "callees": sorted(
+                    {_callee_identity(c) for c in func.getCalledFunctions(TaskMonitor.DUMMY)}
+                ),
+            }
+            if body_bytes:
+                digest = hashlib.sha256()
+                try:
+                    for rng in body:
+                        digest.update(read_memory(mem, rng.getMinAddress(), int(rng.getLength())))
+                    fact["body"] = digest.hexdigest()
+                except Exception:  # unreadable or uninitialised: compares as changed
+                    fact["body"] = None
+            items.append(fact)
+        return {"items": items}
 
     @mcp.tool(name="_export_types", annotations=ANNO_READ_ONLY, tags={"internal"})
     @session.require_open

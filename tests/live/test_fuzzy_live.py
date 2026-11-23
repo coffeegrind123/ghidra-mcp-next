@@ -115,6 +115,16 @@ async def _scenario(work: Path) -> dict[str, Any]:
             algorithm="fuzzy",
             limit=5000,
         )
+        out["programs"] = await call(
+            "diff_programs", source_database=src, target_database=dst, limit=5000
+        )
+        out["programs_bytes"] = await call(
+            "diff_programs",
+            source_database=src,
+            target_database=dst,
+            include_body_bytes=True,
+            limit=5000,
+        )
         out["propagated"] = await call(
             "propagate_documentation",
             source_database=src,
@@ -182,3 +192,17 @@ def test_fuzzy_propagation_and_cross_database_diff(run):
     assert not c.get("is_error"), c
     assert c["level"] == "decompiled" and c["a_instructions"] > 0
     assert 0.0 < c["similarity"] <= 1.0
+
+
+def test_diff_programs_finds_the_patched_function(run):
+    target = int(run["pair"]["target"]["address"], 16)
+    for key, kinds in (("programs", {"code"}), ("programs_bytes", {"code", "bytes"})):
+        result = run[key]
+        assert not result.get("is_error"), result
+        assert result["analysis_warning"] is None
+        assert result["matched"]["identical"] > 0
+        by_target = {int(c["target"]["address"], 16): c for c in result["changes"]}
+        assert target in by_target, result["changes"]
+        assert kinds <= set(by_target[target]["change_types"])
+        # Both databases come from the same file: only the patched function differs.
+        assert result["matched"]["changed"] == 1, result["changes"]

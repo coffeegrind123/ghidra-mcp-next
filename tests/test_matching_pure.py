@@ -6,7 +6,13 @@
 
 from __future__ import annotations
 
-from re_mcp_ghidra.matching import match_fuzzy, match_unique, similarity
+from re_mcp_ghidra.matching import (
+    classify_changes,
+    match_fuzzy,
+    match_unique,
+    similarity,
+    unmatched,
+)
 
 
 def _h(address: str, value: str | None, name: str = "", default: bool = True) -> dict:
@@ -93,3 +99,57 @@ def test_fuzzy_is_one_to_one_and_skips_close_calls():
     matches = match_fuzzy(src, [near, far], threshold=0.75)
     assert [(m["source"]["address"], m["target"]["address"]) for m in matches] == [("0x10", "0x30")]
     assert matches[0]["second_best"] < matches[0]["score"]
+
+
+def _pair(src: str, dst: str, method: str = "exact", score: float | None = None) -> dict:
+    m = {"source": {"address": src, "name": src}, "target": {"address": dst, "name": dst}}
+    m["method"] = method
+    if score is not None:
+        m["score"] = score
+    return m
+
+
+def test_classify_changes_kinds_and_order():
+    matches = [
+        _pair("0x10", "0x20"),  # identical
+        _pair("0x11", "0x21"),  # same code, swapped call target
+        _pair("0x12", "0x22", "fuzzy", 0.8),  # changed code and grew
+        _pair("0x13", "0x23"),  # same hash, bytes differ (relocation)
+    ]
+    same = {"size": 10, "callees": ["name:a"], "body": "x"}
+    src = {"0x10": same, "0x11": same, "0x12": same, "0x13": same}
+    dst = {
+        "0x20": same,
+        "0x21": {**same, "callees": ["name:b"]},
+        "0x22": {**same, "size": 14},
+        "0x23": {**same, "body": "y"},
+    }
+    changed, identical = classify_changes(matches, src, dst)
+    assert identical == 1
+    assert [c["target"]["address"] for c in changed] == ["0x22", "0x21", "0x23"]
+    assert changed[0]["change_types"] == ["code", "size"] and changed[0]["size_delta"] == 4
+    assert changed[0]["similarity"] == 0.8
+    assert changed[1]["change_types"] == ["callees"]
+    assert changed[1]["callees_added"] == ["name:b"] and changed[1]["callees_removed"] == ["name:a"]
+    assert changed[2]["change_types"] == ["bytes"]
+
+
+def test_unreadable_body_counts_as_changed_and_digests_are_optional():
+    a = {"size": 4, "callees": []}
+    changed, identical = classify_changes(
+        [_pair("0x1", "0x2")], {"0x1": {**a, "body": None}}, {"0x2": {**a, "body": None}}
+    )
+    assert identical == 0 and changed[0]["change_types"] == ["bytes"]
+    changed, identical = classify_changes([_pair("0x1", "0x2")], {"0x1": a}, {"0x2": a})
+    assert identical == 1 and changed == []
+
+
+def test_unmatched_counts_small_functions():
+    items = [
+        {"address": "0x1", "name": "a"},
+        {"address": "0x2", "name": "b", "too_small": True},
+        {"address": "0x3", "name": "c"},
+    ]
+    out = unmatched(items, {"0x1"})
+    assert out["total"] == 2 and out["too_small"] == 1
+    assert [i["name"] for i in out["items"]] == ["b", "c"]

@@ -288,6 +288,87 @@ async def find_matches(
         "source_hashed": len(source),
         "target_hashed": len(target),
         "fuzzy": fuzzy_count,
+        "source_items": source,
+        "target_items": target,
+    }
+
+
+FACTS_PAGE = 2000
+UNMATCHED_SHOWN = 50
+
+
+async def _facts(pool, database: str, addresses: list[str], body_bytes: bool) -> dict[str, dict]:
+    out: dict[str, dict] = {}
+    for i in range(0, len(addresses), FACTS_PAGE):
+        page = await _call(
+            pool,
+            database,
+            "_function_facts",
+            {"addresses": addresses[i : i + FACTS_PAGE], "body_bytes": body_bytes},
+        )
+        out.update({f["address"]: f for f in page["items"]})
+    return out
+
+
+def classify_changes(
+    matches: list[dict], src_facts: dict[str, dict], dst_facts: dict[str, dict]
+) -> tuple[list[dict], int]:
+    """Changed pairs, most changed first, and the number of identical pairs.
+
+    A pair changed when its hashes differ (a fuzzy match: "code"), its callee
+    identities differ ("callees": catches a swapped call target with
+    otherwise identical code), its body size differs ("size"), or, when body
+    digests were taken, its bytes differ ("bytes": address-dependent, so
+    noisy on relinked images; an unreadable body counts as differing).
+    """
+    changed, identical = [], 0
+    for m in matches:
+        a = src_facts.get(m["source"]["address"], {})
+        b = dst_facts.get(m["target"]["address"], {})
+        kinds = []
+        if m.get("method") == "fuzzy":
+            kinds.append("code")
+        added = sorted(set(b.get("callees", [])) - set(a.get("callees", [])))
+        removed = sorted(set(a.get("callees", [])) - set(b.get("callees", [])))
+        if added or removed:
+            kinds.append("callees")
+        size_delta = b.get("size", 0) - a.get("size", 0)
+        if size_delta:
+            kinds.append("size")
+        if "body" in a and "body" in b and (a["body"] is None or a["body"] != b["body"]):
+            kinds.append("bytes")
+        if not kinds:
+            identical += 1
+            continue
+        changed.append(
+            {
+                "source": m["source"],
+                "target": m["target"],
+                "similarity": m.get("score", 1.0) if m.get("method") == "fuzzy" else 1.0,
+                "change_types": kinds,
+                "size_delta": size_delta,
+                "callees_added": added,
+                "callees_removed": removed,
+            }
+        )
+    changed.sort(
+        key=lambda c: (
+            c["similarity"],
+            -len(c["change_types"]),
+            -(len(c["callees_added"]) + len(c["callees_removed"])),
+            -abs(c["size_delta"]),
+            c["target"]["address"],
+        )
+    )
+    return changed, identical
+
+
+def unmatched(items: list[dict], matched: set[str]) -> dict:
+    rest = [i for i in items if i["address"] not in matched]
+    return {
+        "total": len(rest),
+        "too_small": sum(1 for i in rest if i.get("too_small")),
+        "items": [{"address": i["address"], "name": i["name"]} for i in rest[:UNMATCHED_SHOWN]],
     }
 
 
@@ -475,6 +556,72 @@ def register_matching_tools(mcp: FastMCP, pool: WorkerPoolProvider) -> None:
             "dry_run": dry_run,
             "undo_name": result.get("undo_name"),
             "revision": result.get("revision"),
+        }
+
+    @mcp.tool(annotations={"title": "Diff Programs", "readOnlyHint": True})
+    async def diff_programs(
+        source_database: Annotated[str, Field(description='The older build. Example: "app_v1"')],
+        target_database: Annotated[str, Field(description='The newer build. Example: "app_v2"')],
+        include_body_bytes: Annotated[
+            bool,
+            Field(
+                description=(
+                    "Also flag pairs whose raw bytes differ (address-dependent: noisy "
+                    "when the image was relinked). Example: false"
+                )
+            ),
+        ] = False,
+        threshold: Threshold = DEFAULT_THRESHOLD,
+        offset: Annotated[int, Field(ge=0, description="Skip this many changes. Example: 0")] = 0,
+        limit: Annotated[
+            int, Field(ge=1, le=5000, description="Most changes to return. Example: 100")
+        ] = 100,
+    ) -> dict:
+        """Summarise what changed between two builds, function by function.
+
+        Use to triage a patch or a new version: matches every function
+        (match_functions with algorithm fuzzy), then flags each pair whose
+        code (hash), callees, size or optionally bytes differ; diff_functions_across
+        shows one pair in detail. Changes are ranked least similar first.
+        Unmatched functions are new, removed, too small to hash or ambiguous;
+        they are listed, not guessed. Returns {matched: {identical, changed},
+        changes: [{source, target, similarity, change_types, size_delta,
+        callees_added, callees_removed}] (one page), has_more, source_unmatched,
+        target_unmatched: {total, too_small, items}, analysis_warning}.
+        """
+        found = await find_matches(
+            pool, source_database, target_database, "fuzzy", "all", "all", threshold
+        )
+        matches = found["matches"]
+        src = await _facts(
+            pool, source_database, [m["source"]["address"] for m in matches], include_body_bytes
+        )
+        dst = await _facts(
+            pool, target_database, [m["target"]["address"] for m in matches], include_body_bytes
+        )
+        changed, identical = classify_changes(matches, src, dst)
+        warning = None
+        for name, items in (
+            (source_database, found["source_items"]),
+            (target_database, found["target_items"]),
+        ):
+            tiny = sum(1 for i in items if i.get("size", 0) <= 1)
+            if not items or tiny * 2 > len(items):
+                warning = (
+                    f"{name}: most functions have bodies of 1 byte or none; run "
+                    "auto-analysis (wait_for_analysis) before diffing."
+                )
+        return {
+            "matched": {"identical": identical, "changed": len(changed)},
+            "changes": changed[offset : offset + limit],
+            "has_more": offset + limit < len(changed),
+            "source_unmatched": unmatched(
+                found["source_items"], {m["source"]["address"] for m in matches}
+            ),
+            "target_unmatched": unmatched(
+                found["target_items"], {m["target"]["address"] for m in matches}
+            ),
+            "analysis_warning": warning,
         }
 
     @mcp.tool(annotations={"title": "Diff Functions Across Databases", "readOnlyHint": True})
