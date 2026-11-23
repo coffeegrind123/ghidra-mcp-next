@@ -135,6 +135,14 @@ async def _scenario(work: Path) -> dict[str, Any]:
             database_b=dst,
             address_b=pair["target"]["address"],
         )
+        out["cdiff"] = await call(
+            "diff_functions_across",
+            database_a=src,
+            address_a=pair["source"]["address"],
+            database_b=dst,
+            address_b=pair["target"]["address"],
+            level="decompiled",
+        )
     return out
 
 
@@ -167,3 +175,10 @@ def test_fuzzy_propagation_and_cross_database_diff(run):
     assert run["renamed"]["name"] == "fuzzy_target"
     assert 0.8 < run["diff"]["similarity"] < 1.0
     assert any(op["kind"] == "replace" for op in run["diff"]["ops"])
+    # The patched immediate (SHR RSI,0x3f -> 0x3e in one /bin/true) feeds dead
+    # code the decompiler drops, so the C may legitimately be unchanged: this
+    # checks the cross-database decompiled path, not a change.
+    c = run["cdiff"]
+    assert not c.get("is_error"), c
+    assert c["level"] == "decompiled" and c["a_instructions"] > 0
+    assert 0.0 < c["similarity"] <= 1.0

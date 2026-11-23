@@ -122,7 +122,7 @@ signature and documentation.
 | `add_function_range` |  | Add the range [start, end) to the body of the function containing function_address. |
 | `clear_flow_and_repair` |  | Clear the code reached from an address, then let Ghidra re-disassemble it. |
 | `delete_function` |  | Remove the function definition containing an address; instructions stay. |
-| `diff_functions` |  | Diff two functions instruction by instruction. |
+| `diff_functions` |  | Diff two functions, by instruction or by decompiled C. |
 | `disassemble_function` | yes | List every instruction in the body of the function containing an address. |
 | `get_code_unit` |  | Classify what occupies an address: instruction, defined data or undefined bytes. |
 | `get_function` | yes | Describe the function containing an address: bounds, signature and flags. |

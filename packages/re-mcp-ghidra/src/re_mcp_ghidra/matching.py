@@ -485,16 +485,56 @@ def register_matching_tools(mcp: FastMCP, pool: WorkerPoolProvider) -> None:
         ],
         database_b: Annotated[str, Field(description='Second database. Example: "app_v2"')],
         address_b: Annotated[str, Field(description='Function in database_b. Example: "0x401230"')],
+        level: Annotated[
+            Literal["instructions", "decompiled"],
+            Field(
+                description=(
+                    "instructions: normalised instruction lines; decompiled: C lines, "
+                    'decompiler artifacts separated. Example: "decompiled"'
+                )
+            ),
+        ] = "instructions",
+        include_artifacts: Annotated[
+            bool,
+            Field(
+                description=(
+                    "decompiled only: also show hunks that differ only by renumbered "
+                    "variables or string labels. Example: false"
+                )
+            ),
+        ] = False,
     ) -> dict:
         """Diff a function in one database against one in another.
 
         Use after match_functions to see what changed between builds (a fuzzy
         match, or a patched copy); diff_functions compares two functions within
-        one database. Branch targets become instruction indexes and calls become
-        callee names, so moved code compares equal. Returns {a, b, similarity,
-        a_instructions, b_instructions, ops: [{kind, a, b}], truncated}.
+        one database. instructions: branch targets become instruction indexes
+        and calls become callee names, so moved code compares equal.
+        decompiled: C lines with load addresses masked; hunks that only
+        renumber auto variables or move string labels go to suppressed.
+        Returns {a, b, level, similarity, a_instructions, b_instructions, ops
+        (instructions), hunks and suppressed (decompiled), truncated}.
         """
         import difflib  # noqa: PLC0415
+
+        if level == "decompiled":
+            from re_mcp_ghidra.cdiff import diff_c  # noqa: PLC0415
+
+            a = await _call(pool, database_a, "_decompiled_lines", {"address": address_a})
+            b = await _call(pool, database_b, "_decompiled_lines", {"address": address_b})
+            d = diff_c(a["lines"], b["lines"], include_artifacts)
+            return {
+                "a": {"database": database_a, "address": a["address"], "name": a["name"]},
+                "b": {"database": database_b, "address": b["address"], "name": b["name"]},
+                "level": level,
+                "similarity": d["similarity"],
+                "a_instructions": d["a_lines"],
+                "b_instructions": d["b_lines"],
+                "ops": [],
+                "hunks": d["hunks"],
+                "suppressed": d["suppressed"],
+                "truncated": d["truncated"],
+            }
 
         a = await _call(pool, database_a, "_normalized_instructions", {"address": address_a})
         b = await _call(pool, database_b, "_normalized_instructions", {"address": address_b})
@@ -511,6 +551,7 @@ def register_matching_tools(mcp: FastMCP, pool: WorkerPoolProvider) -> None:
         return {
             "a": {"database": database_a, "address": a["address"], "name": a["name"]},
             "b": {"database": database_b, "address": b["address"], "name": b["name"]},
+            "level": level,
             "similarity": round(matcher.ratio(), 4),
             "a_instructions": len(la),
             "b_instructions": len(lb),

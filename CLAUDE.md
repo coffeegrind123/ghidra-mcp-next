@@ -40,7 +40,7 @@ Key points for editing:
 - **Backend** (`re_mcp_ghidra.backend`): implements the `Backend` protocol — register `open_database`, prompts, backend-specific instructions, and target listing. Discovered via `re_mcp.backends` entry points.
 - **Worker provider** (`re_mcp.worker_provider`): `WorkerPoolProvider(Provider)`, `RoutingTool(Tool)`, `RoutingTemplate(ResourceTemplate)`, `Worker` dataclass. Session-scoped ownership under `_lock` — `close_for_session()` and `detach_all()` are atomic. `ensure_session_cleanup()` registers a disconnect callback on the MCP session's exit stack.
 - **Workers** (`re_mcp_ghidra.server`): one per database, stdio transport. Entry point: `re-mcp-ghidra-worker`.
-- **Bootstrap-safe modules** (importable without `bootstrap()`): all `re_mcp` modules, plus `<backend>.exceptions`, `<backend>.models`, `<backend>.transforms`, `<backend>.prompts/`. The supervisor never imports backend-engine-required modules.
+- **Bootstrap-safe modules** (importable without `bootstrap()`): all `re_mcp` modules, plus `<backend>.exceptions`, `<backend>.models`, `<backend>.transforms`, `<backend>.prompts/`, and `re_mcp_ghidra.cdiff` (pure Python). The supervisor never imports backend-engine-required modules.
 - **Engine-required modules**: `<backend>.helpers`, `<backend>.session`, `<backend>.tools/`, `<backend>.resources`. Backend-specific imports — only loaded in worker processes.
 - `@session.require_open` (no parens) — decorator on nearly every tool
 - All tools return Pydantic models on success; raise `BackendError` subclass on failure (`GhidraError`)

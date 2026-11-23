@@ -14,6 +14,7 @@ from typing import Annotated, Literal
 from fastmcp import FastMCP
 from pydantic import BaseModel, Field
 
+from re_mcp_ghidra.cdiff import code_lines, diff_c
 from re_mcp_ghidra.exceptions import GhidraError
 from re_mcp_ghidra.helpers import (
     ANNO_READ_ONLY,
@@ -169,19 +170,66 @@ class DiffOp(BaseModel):
     b: list[str] = Field(description="Instructions from function b.")
 
 
+class CHunk(BaseModel):
+    kind: str = Field(description="code (a real change), var-renumber, string-label or artifact.")
+    a_start: int = Field(description="First line in a (1-based).")
+    b_start: int = Field(description="First line in b (1-based).")
+    a: list[str] = Field(description="Lines from a.")
+    b: list[str] = Field(description="Lines from b.")
+
+
 class DiffResult(BaseModel):
     a: GraphNode = Field(description="Function a.")
     b: GraphNode = Field(description="Function b.")
-    similarity: float = Field(description="0-1, share of matching normalised instructions.")
-    a_instructions: int = Field(description="Instructions in a.")
-    b_instructions: int = Field(description="Instructions in b.")
-    ops: list[DiffOp] = Field(description="The diff; runs of equal lines are collapsed.")
-    truncated: bool = Field(description="ops was cut at 500 entries.")
+    level: str = Field(default="instructions", description="instructions or decompiled.")
+    similarity: float = Field(description="0-1, share of matching normalised lines.")
+    a_instructions: int = Field(description="Instructions in a (C lines at level decompiled).")
+    b_instructions: int = Field(description="Instructions in b (C lines at level decompiled).")
+    ops: list[DiffOp] = Field(
+        default_factory=list, description="Instruction diff; runs of equal lines are collapsed."
+    )
+    hunks: list[CHunk] = Field(default_factory=list, description="Decompiled-C diff hunks.")
+    suppressed: dict[str, int] = Field(
+        default_factory=dict, description="Artifact hunks left out, by kind."
+    )
+    truncated: bool = Field(description="ops or hunks was cut at 500 entries.")
 
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+
+DiffLevel = Annotated[
+    Literal["instructions", "decompiled"],
+    Field(
+        description=(
+            "instructions: normalised instruction lines; decompiled: C lines, "
+            'decompiler artifacts separated. Example: "decompiled"'
+        )
+    ),
+]
+IncludeArtifacts = Annotated[
+    bool,
+    Field(
+        description=(
+            "decompiled only: also show hunks that differ only by renumbered "
+            "variables or string labels. Example: false"
+        )
+    ),
+]
+
+
+def _c_lines(func) -> list[str]:
+    from re_mcp_ghidra.tools.decompiled_search import _decompiled  # noqa: PLC0415
+
+    text = _decompiled(func)
+    if text is None:
+        raise GhidraError(
+            f"{func.getName()} did not decompile; level instructions still works.",
+            error_type="DecompilationFailed",
+        )
+    return code_lines(text)
 
 
 def _node(func) -> GraphNode:
@@ -839,18 +887,52 @@ def register(mcp: FastMCP) -> None:
             "lines": _normalised(func),
         }
 
+    @mcp.tool(name="_decompiled_lines", annotations=ANNO_READ_ONLY, tags={"internal"})
+    @session.require_open
+    def decompiled_lines(address: str) -> dict:
+        """Internal: a function's decompiled C as lines (for cross-database diffs)."""
+        func = resolve_function(address)
+        return {
+            "address": format_address(func.getEntryPoint().getOffset()),
+            "name": str(func.getName()),
+            "lines": _c_lines(func),
+        }
+
     @mcp.tool(annotations=ANNO_READ_ONLY, tags={"functions"})
     @session.require_open
-    def diff_functions(address_a: Address, address_b: Address) -> DiffResult:
-        """Diff two functions instruction by instruction.
+    def diff_functions(
+        address_a: Address,
+        address_b: Address,
+        level: DiffLevel = "instructions",
+        include_artifacts: IncludeArtifacts = False,
+    ) -> DiffResult:
+        """Diff two functions, by instruction or by decompiled C.
 
         Use to compare variants (a patched copy, an inlined duplicate, the same
-        routine in two places). Branch targets inside each function become
-        instruction indexes and calls become callee names, so code that only
-        moved compares equal. Returns {a, b, similarity, a_instructions,
-        b_instructions, ops: [{kind, a, b}], truncated}.
+        routine in two places). instructions: branch targets inside each
+        function become instruction indexes and calls become callee names, so
+        moved code compares equal. decompiled: C lines with load addresses in
+        default names masked; hunks that differ only by renumbered auto
+        variables or string labels are counted in suppressed, not shown.
+        Returns {a, b, level, similarity, a_instructions, b_instructions, ops:
+        [{kind, a, b}] (instructions), hunks: [{kind, a_start, b_start, a, b}]
+        and suppressed (decompiled), truncated}.
         """
         fa, fb = resolve_function(address_a), resolve_function(address_b)
+        if level == "decompiled":
+            ca, cb = _c_lines(fa), _c_lines(fb)
+            d = diff_c(ca, cb, include_artifacts)
+            return DiffResult(
+                a=_node(fa),
+                b=_node(fb),
+                level=level,
+                similarity=d["similarity"],
+                a_instructions=d["a_lines"],
+                b_instructions=d["b_lines"],
+                hunks=[CHunk(**h) for h in d["hunks"]],
+                suppressed=d["suppressed"],
+                truncated=d["truncated"],
+            )
         la, lb = _normalised(fa), _normalised(fb)
         matcher = difflib.SequenceMatcher(a=la, b=lb, autojunk=False)
         ops = [

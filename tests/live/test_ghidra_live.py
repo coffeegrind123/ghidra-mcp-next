@@ -326,6 +326,12 @@ async def _analysis_cases(rec: Recorder, first: dict, second: dict) -> dict[str,
     )
     out["diff_same"] = await rec.tool("diff_functions", address_a=big, address_b=big)
     out["diff_other"] = await rec.tool("diff_functions", address_a=big, address_b=second["start"])
+    out["cdiff_same"] = await rec.tool(
+        "diff_functions", address_a=big, address_b=big, level="decompiled"
+    )
+    out["cdiff_other"] = await rec.tool(
+        "diff_functions", address_a=big, address_b=second["start"], level="decompiled"
+    )
     return out
 
 
@@ -746,6 +752,10 @@ def test_analysis_tools(run):
     seen = {(h["address"], h["line"]) for h in first_page["items"]}
     assert not seen & {(h["address"], h["line"]) for h in second_page["items"]}
     assert a["diff_other"]["similarity"] < 1.0
+    same, other = a["cdiff_same"], a["cdiff_other"]
+    assert same["level"] == "decompiled" and same["similarity"] == 1.0 and same["hunks"] == []
+    assert other["similarity"] < 1.0
+    assert any(h["kind"] == "code" for h in other["hunks"])
 
 
 def test_decompile_lines_and_listing_extras(run):
