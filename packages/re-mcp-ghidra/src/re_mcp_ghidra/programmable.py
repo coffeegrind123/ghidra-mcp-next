@@ -25,6 +25,7 @@ from __future__ import annotations
 import ast
 import collections
 import contextlib
+import functools
 import io
 import json
 import logging
@@ -150,6 +151,35 @@ def to_json(value: Any) -> Any:
         with contextlib.suppress(Exception):
             return [to_json(v) for v in value]
     return str(value)
+
+
+def atomic(name: str, fn: Callable[..., Any]) -> Callable[..., Any]:
+    """Run a write tool in its own transaction when none is open.
+
+    Inside batch/execute a transaction is already open and the call passes
+    straight through.  Called on its own, the tool gets transaction
+    "MCP: <name>": committed on success (one undo step), rolled back if it
+    raises.  Tools that manage the worker or their own transaction
+    (NOT_IN_TRANSACTION) are never wrapped.
+    """
+    if name in NOT_IN_TRANSACTION:
+        return fn
+
+    @functools.wraps(fn)
+    def wrapper(*args: Any, **kwargs: Any) -> Any:
+        program = session.program if session.is_open() else None
+        if program is None or program.getCurrentTransactionInfo() is not None:
+            return fn(*args, **kwargs)
+        tx = program.startTransaction(UNDO_PREFIX + name)
+        ok = False
+        try:
+            result = fn(*args, **kwargs)
+            ok = True
+            return result
+        finally:
+            program.endTransaction(tx, ok)
+
+    return wrapper
 
 
 # ---------------------------------------------------------------------------

@@ -64,26 +64,38 @@ class GhidraServer(BackendServer):
         return await call_ghidra(fn, *args, **kwargs)
 
     def tool(self, name_or_fn: Any = None, **kwargs: Any) -> Any:
-        """Register a tool and remember its plain sync function.
+        """Register a tool, recording it for batch/execute and making writes atomic.
 
         batch and execute call tools directly on the main thread through
         :data:`re_mcp_ghidra.programmable.registry`, inside one transaction,
-        instead of round-tripping through MCP.  The function recorded is the
-        one handed to the decorator (still guarded by session.require_open),
-        not BackendServer's async main-thread dispatcher.
+        instead of round-tripping through MCP.  A write tool called on its own
+        (outside batch/execute) is wrapped by
+        :func:`re_mcp_ghidra.programmable.atomic` so it gets its own transaction
+        and undo step instead of failing with "Transaction has not been started".
         """
-        from re_mcp_ghidra.programmable import registry  # noqa: PLC0415
+        from re_mcp_ghidra.programmable import atomic, registry  # noqa: PLC0415
+
+        annotations = kwargs.get("annotations") or {}
+        read_only = bool(
+            annotations.get("readOnlyHint")
+            if isinstance(annotations, dict)
+            else getattr(annotations, "readOnlyHint", False)
+        )
+
+        def prepare(name: str, fn: Callable[..., Any]) -> Callable[..., Any]:
+            wrapped = fn if read_only else atomic(name, fn)
+            registry.add(name, wrapped)
+            return wrapped
 
         if callable(name_or_fn):
-            registry.add(kwargs.get("name") or name_or_fn.__name__, name_or_fn)
-            return super().tool(name_or_fn, **kwargs)
+            name = kwargs.get("name") or name_or_fn.__name__
+            return super().tool(prepare(name, name_or_fn), **kwargs)
 
         inner = super().tool(name_or_fn, **kwargs)
         explicit = name_or_fn if isinstance(name_or_fn, str) else kwargs.get("name")
 
         def decorator(fn: Callable[..., Any]) -> Any:
-            registry.add(explicit or fn.__name__, fn)
-            return inner(fn)
+            return inner(prepare(explicit or fn.__name__, fn))
 
         return decorator
 
