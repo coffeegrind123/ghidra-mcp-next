@@ -61,8 +61,10 @@ Ported:
 | analyze_vtable, find_vtables_containing, find_vtable_callers (adjacent-table merge fixed, pure-virtual gap kept, typed/offset_only confidence); ReVa C++ fixture | 61dd391 |
 | diff_functions / diff_functions_across level="decompiled" with artifact classes (var-renumber, string-label) | bc1d5b2 |
 | Signature export pages overlapped (found while reading the matcher for diff_programs) | a3a524d |
+| diff_programs (code/callees/size/bytes change types, unmatched listed, analysis warning) | 3b8ccac |
+| diff_strings (strings, or defined data as type=value, multiset across builds) | a9a7f70 |
 
-Left (priority order): program change summary (diff_programs) and diff_strings; list filters and import ordinals. MAYBE and SKIP lists
+Left (priority order): list filters and import ordinals. MAYBE and SKIP lists
 in the spec.
 
 ## cellebrite-labs/ghidra-rpc
