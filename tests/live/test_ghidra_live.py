@@ -180,6 +180,14 @@ async def _scenario(binary: Path) -> dict[str, Any]:
             args=[first["start"], "should_not_stick"],
         )
         out["after_python_fail"] = await rec.tool("get_function", address=first["start"])
+        out["python_loop"] = await rec.tool(
+            "run_ghidra_script",
+            script="rename_then_loop.py",
+            args=[first["start"], "loop_should_not_stick"],
+            timeout_s=3,
+        )
+        out["after_python_loop"] = await rec.tool("get_function", address=first["start"])
+        out["flood"] = await rec.tool("run_ghidra_script", script="print_flood.py")
 
         out["scores"] = await rec.tool("score_documentation", include_locals=True, limit=5)
         out["rerun"] = await rec.tool("run_auto_analysis")
@@ -621,6 +629,18 @@ def test_failing_script_rolls_back(run):
 def test_failing_python_script_rolls_back(run):
     assert run["python_fail"].get("error_type") == "ScriptError", run["python_fail"]
     assert run["after_python_fail"]["name"] != "should_not_stick"
+
+
+def test_script_timeout_rolls_back(run):
+    assert run["python_loop"].get("error_type") == "TimeoutError", run["python_loop"]
+    assert run["after_python_loop"]["name"] != "loop_should_not_stick"
+
+
+def test_script_output_is_capped(run):
+    out = run["flood"]["stdout"]
+    assert out.startswith("line 0")
+    assert len(out) < 70 * 1024
+    assert "truncated" in out
 
 
 def test_python_script_runs(run):

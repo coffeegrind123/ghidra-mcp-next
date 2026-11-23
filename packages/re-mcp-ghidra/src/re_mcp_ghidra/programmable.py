@@ -482,7 +482,7 @@ def _globals(stdout: io.StringIO) -> dict[str, Any]:
 
 
 @contextlib.contextmanager
-def _deadline(seconds: float):
+def _deadline(seconds: float, filename: str = "<execute>"):
     """Raise TimeoutError from the script once *seconds* have passed.
 
     Checked on every Python line (trace hook), so a single long-running Java
@@ -496,7 +496,7 @@ def _deadline(seconds: float):
         return tracer
 
     def global_tracer(frame, event, arg):
-        if frame.f_code.co_filename == "<execute>":
+        if frame.f_code.co_filename == filename:
             return tracer
         return None
 
