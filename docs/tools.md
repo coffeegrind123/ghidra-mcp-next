@@ -341,6 +341,7 @@ signature and documentation.
 | `delete_code_xref` |  | Remove the control-flow (call/jump) reference from one address to another. |
 | `delete_data_xref` |  | Remove the data (read/write/pointer) reference from one address to another. |
 | `find_common_callers` |  | Find functions that call all of the given functions (directly or within depth). |
+| `find_import_references` |  | Find every place that uses an imported function, however it is reached. |
 | `get_call_graph` |  | Build the caller/callee tree around the function containing an address. |
 | `get_xrefs_from` | yes | List outgoing references: what the instruction or data at an address refers to. |
 | `get_xrefs_to` | yes | List incoming references: every place that calls, jumps to or accesses an address. |

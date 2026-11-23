@@ -367,6 +367,9 @@ async def _list_cases(rec: Recorder, second: dict) -> dict[str, Any]:
     thunk = await rec("execute", database=rec.database, read_only=True, code=FIND_THUNK)
     out["thunk"] = await rec.tool("get_function", address=thunk["result"])
     out["not_thunk"] = await rec.tool("get_function", address=second["start"])
+    out["import_refs"] = await rec.tool("find_import_references", name="__LIBC_START_MAIN")
+    out["import_missing"] = await rec.tool("find_import_references", name="__libc_start_mai")
+    out["imports"] = await rec.tool("list_imports", limit=5)
     return out
 
 
@@ -806,7 +809,8 @@ def test_analysis_tools(run):
 def test_list_filters(run):
     x = run["lists"]
     for key, value in x.items():
-        assert value.get("is_error") is not True, (key, value)
+        if key != "import_missing":
+            assert value.get("is_error") is not True, (key, value)
     assert x["names_default"]["items"]
     assert {i["source"] for i in x["names_default"]["items"]} == {"default"}
     assert "default" not in {i["source"] for i in x["names_named"]["items"]}
@@ -834,6 +838,17 @@ def test_thunk_target(run):
     x = run["lists"]
     assert x["thunk"]["thunk_target"] and x["thunk"]["thunk_target_address"]
     assert x["not_thunk"]["thunk_target"] is None
+
+
+def test_import_references_and_ordinals(run):
+    x = run["lists"]
+    refs = x["import_refs"]
+    assert refs["imports"] and refs["imports"][0].startswith("EXTERNAL")
+    # glibc's entry calls __libc_start_main through its GOT slot or a PLT stub.
+    assert any(i["function"] == "entry" and i["is_call"] for i in refs["items"]), refs
+    missing = x["import_missing"]
+    assert missing["error_type"] == "NotFound" and "__libc_start_main" in missing["error"]
+    assert all("ordinal" in i and "original_name" in i for i in x["imports"]["items"])
 
 
 def test_signature_pages_neither_repeat_nor_skip(run):
