@@ -57,6 +57,14 @@ signature and documentation.
 | `set_decompiler_comment` |  | Write the PRE comment shown above a line of pseudocode. |
 | `set_function_comment` |  | Write or clear the header comment of the function containing an address. |
 
+## cpp
+
+| Tool | Listed | What it does |
+|---|---|---|
+| `analyze_vtable` |  | Read a C++ virtual table: each slot's target function and signature. |
+| `find_vtable_callers` |  | Find indirect calls that may reach a virtual method through its table slot. |
+| `find_vtables_containing` |  | Find the virtual tables that hold a pointer to a function, and its slot. |
+
 ## data
 
 | Tool | Listed | What it does |
