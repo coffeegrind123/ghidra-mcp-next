@@ -14,6 +14,7 @@ signature and documentation.
 | `configure_analyzer` |  | Turn an analyzer on or off and change its settings. |
 | `find_code_gaps` |  | Find executable bytes that belong to no function (missed code). |
 | `find_decompiled_calls` |  | Find function call sites in the decompiled output. |
+| `find_function_candidates` |  | Find referenced code that is not inside any function (likely missed functions). |
 | `find_register_value` |  | Compute a register's constant value just before an instruction executes. |
 | `get_analysis_problems` |  | List analysis problems found by Ghidra (ERROR and WARNING bookmarks). |
 | `get_basic_blocks` |  | Get basic blocks of a function (CFG nodes with successor/predecessor lists). |
@@ -51,6 +52,7 @@ signature and documentation.
 | `get_comment` |  | Read every listing comment on the code unit at an address. |
 | `get_decompiler_comments` |  | List pre-comments (visible in decompiler) for a function. |
 | `get_function_comment` |  | Read the header comments of the function containing an address. |
+| `search_comments` |  | Search every comment in the program (all five kinds) for a regex. |
 | `set_comment` |  | Write or clear one listing comment slot at an address, replacing its text. |
 | `set_decompiler_comment` |  | Write the PRE comment at an address; it shows above that line in pseudocode. |
 | `set_function_comment` |  | Write or clear the header comment of the function containing an address. |
@@ -128,6 +130,7 @@ signature and documentation.
 | `set_function_class` |  | Make a function a method of a C++ class. |
 | `set_function_flags` |  | Set or clear noreturn, inline and library flags on the function containing an address. |
 | `set_function_prototype` |  | Set a function's full C prototype (return + args + calling convention). |
+| `set_function_thunk` |  | Mark a function as a thunk (a stub that only jumps to another), or undo it. |
 | `set_variable_storage` |  | Move a parameter or local to different storage (register or stack slot). |
 | `tag_function` |  | Add or remove tags on a function (free-form labels for grouping). |
 
@@ -187,6 +190,7 @@ signature and documentation.
 | `list_exports` |  | List all exported symbols. |
 | `list_imports` |  | List all imported functions/symbols. |
 | `list_program_tree` |  | List folders and fragments in Ghidra's program tree. |
+| `list_relocations` |  | List the loader's relocation entries (where the binary is patched at load time). |
 | `rename_entry_point` |  | Rename the primary symbol of an address that is already an entry point. |
 | `rename_program_tree_folder` |  | Rename a program-tree folder in place; it is not moved to another parent. |
 
@@ -223,6 +227,13 @@ signature and documentation.
 | `list_bookmarks` |  | List all bookmarks in the database, paginated. |
 | `set_bookmark` |  | Add a Note-type bookmark at an address under a category, with a description. |
 
+## processor
+
+| Tool | Listed | What it does |
+|---|---|---|
+| `get_context_registers` |  | Read processor context registers at an address (e.g. ARM TMode, x86 longMode). |
+| `set_context_register` |  | Set a processor context register over an address range. |
+
 ## scripts
 
 | Tool | Listed | What it does |
@@ -235,8 +246,10 @@ signature and documentation.
 | Tool | Listed | What it does |
 |---|---|---|
 | `find_code_by_string` | yes | Find every reference to defined strings whose value matches a regex. |
+| `find_constant_uses` |  | Find instructions whose operands contain a constant (or one in a range). |
 | `list_strings` | yes | List defined string data items, optionally filtered by a case-insensitive regex. |
 | `search_bytes` |  | Find a byte pattern in program memory, with optional wildcards. |
+| `search_decompiled` |  | Search the decompiled C of every function (or a filtered set) for a regex. |
 | `search_text` |  | Search the disassembly text of every instruction for a regex. |
 
 ## signatures
