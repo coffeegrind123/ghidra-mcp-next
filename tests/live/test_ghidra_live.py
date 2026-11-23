@@ -182,6 +182,7 @@ async def _scenario(binary: Path) -> dict[str, Any]:
             name: await rec.tool("get_data_type", name=name)
             for name in ("hdr_a_t", "hdr_b_t", "hdr_id_t")
         }
+        out["low"] = await _low_level_cases(rec, db, exclude={first["start"], second["start"]})
         out["regvalue"] = await _register_value_cases(
             rec, db, exclude={first["start"], second["start"]}
         )
@@ -255,6 +256,77 @@ async def _register_value_cases(rec: Recorder, db: str, exclude: set[str]) -> di
             "find_register_value", address=hex(base + query_offset), register_name=register
         )
     return results
+
+
+async def _low_level_cases(rec: Recorder, db: str, exclude: set[str]) -> dict[str, Any]:
+    out: dict[str, Any] = {}
+    out["analyzers"] = await rec.tool("list_analyzers")
+    pick = next(
+        a
+        for a in out["analyzers"]["items"]
+        if a["one_time_supported"] and any(o["type"] == "BOOLEAN_TYPE" for o in a["options"])
+    )
+    option = next(o for o in pick["options"] if o["type"] == "BOOLEAN_TYPE")
+    out["analyzer_pick"] = pick
+    out["option_pick"] = option
+    out["configured"] = await rec.tool(
+        "configure_analyzer",
+        name=pick["name"],
+        enabled="off" if pick["enabled"] else "on",
+        options={option["name"]: not option["value"]},
+    )
+    out["one_time"] = await rec.tool("run_auto_analysis", analyzers=[pick["name"]])
+
+    found = await rec(
+        "execute",
+        database=db,
+        read_only=True,
+        code=(
+            "exclude = set(%r)\n"
+            "call = target = None\n"
+            "for f in program.getFunctionManager().getFunctions(True):\n"
+            "    entry = '0x' + str(f.getEntryPoint()).lstrip('0')\n"
+            "    if f.isThunk() or f.isExternal() or entry.lower() in exclude:\n"
+            "        continue\n"
+            "    for i in program.getListing().getInstructions(f.getBody(), True):\n"
+            "        if call is None and i.getFlowType().isCall():\n"
+            "            call = '0x' + str(i.getAddress()).lstrip('0')\n"
+            "    if target is None and f.getName().startswith('FUN_'):\n"
+            "        target = entry\n"
+            "    if call and target:\n"
+            "        break\n"
+            "return {'call': call, 'target': target}"
+        )
+        % sorted(e.lower() for e in exclude),
+    )
+    call, target = found["result"]["call"], found["result"]["target"]
+    out["flow_set"] = await rec.tool("set_flow_override", address=call, override="CALL_RETURN")
+    out["flow_cleared"] = await rec.tool("set_flow_override", address=call, override="NONE")
+    out["repair"] = await rec(
+        "batch",
+        database=db,
+        ops=[{"tool": "clear_flow_and_repair", "params": {"address": call}}],
+    )
+    out["storage"] = await rec(
+        "batch",
+        database=db,
+        ops=[
+            {
+                "tool": "set_function_prototype",
+                "params": {"address": target, "type_string": "int f(int a, int b)"},
+            },
+            {
+                "tool": "set_variable_storage",
+                "params": {"function_address": target, "variable_name": "a", "storage": "ECX"},
+            },
+        ],
+    )
+    out["label"] = await rec.tool("create_label", address=call, name="extra_name")
+    out["label_again"] = await rec.tool("create_label", address=call, name="extra_name")
+    out["unlabel"] = await rec.tool("delete_label", address=call, name="extra_name")
+    out["unlabel_again"] = await rec.tool("delete_label", address=call, name="extra_name")
+    out["undo_direct"] = await rec.tool("undo")
+    return out
 
 
 def _instruction_sizes(hexbytes: str) -> list[int]:
@@ -401,6 +473,55 @@ def test_find_register_value(run, case):
         assert got["found"] is True, got
         assert got["value"].lower() == expected
         assert got["source_address"], got
+
+
+def test_list_and_configure_analyzers(run):
+    low = run["low"]
+    assert low["analyzers"]["total"] > 10
+    pick, option = low["analyzer_pick"], low["option_pick"]
+    configured = low["configured"]
+    assert configured["is_error"] is False, configured
+    assert configured["enabled"] is (not pick["enabled"])
+    changed = next(o for o in configured["options"] if o["name"] == option["name"])
+    assert changed["value"] is (not option["value"])
+
+
+def test_run_selected_analyzer(run):
+    one = run["low"]["one_time"]
+    assert one["is_error"] is False, one
+    assert one["analyzers"] == [run["low"]["analyzer_pick"]["name"]]
+
+
+def test_flow_override_set_and_cleared(run):
+    low = run["low"]
+    assert low["flow_cleared"]["is_error"] is False, low["flow_cleared"]
+    assert low["flow_set"]["current"] == "CALL_RETURN"
+    assert low["flow_cleared"]["previous"] == "CALL_RETURN"
+    assert low["flow_cleared"]["current"] == "NONE"
+    assert low["repair"]["applied"] is True, low["repair"]
+
+
+def test_set_variable_storage(run):
+    batch = run["low"]["storage"]
+    assert batch["applied"] is True, batch
+    result = batch["results"][1]
+    assert "ECX" in result["storage"]
+    assert result["custom_storage_enabled"] is True
+
+
+def test_labels_add_and_delete(run):
+    low = run["low"]
+    assert low["label_again"]["is_error"] is False, low["label_again"]
+    assert low["unlabel"]["is_error"] is False, low["unlabel"]
+    assert low["label"]["name"] == "extra_name"
+    assert low["label_again"]["name"] == "extra_name"
+    assert low["unlabel"]["name"] == "extra_name"
+    assert low["unlabel_again"]["error_type"] == "NotFound"
+
+
+def test_direct_write_is_its_own_undo_step(run):
+    # A write tool called outside batch/execute gets its own transaction.
+    assert run["low"]["undo_direct"]["step"] == "MCP: delete_label"
 
 
 def test_save_reopen_from_project(run):

@@ -42,6 +42,44 @@ class AnalysisRun(BaseModel):
     functions_before: int = Field(description="Function count before analysis.")
     functions_after: int = Field(description="Function count after analysis.")
     seconds: float = Field(description="How long analysis took.")
+    analyzers: list[str] = Field(description="Analyzers run alone; empty for full analysis.")
+
+
+def _run_selected(program, names: list[str]) -> None:
+    """Run the named analyzers once each over the whole program, in a transaction."""
+    from ghidra.app.script import GhidraScriptUtil  # noqa: PLC0415
+    from ghidra.util.task import TaskMonitor  # noqa: PLC0415
+
+    from re_mcp_ghidra.exceptions import GhidraError  # noqa: PLC0415
+    from re_mcp_ghidra.tools.analyzers import manager  # noqa: PLC0415
+
+    mgr = manager()
+    chosen = []
+    for name in names:
+        analyzer = mgr.getAnalyzer(name)
+        if analyzer is None:
+            raise GhidraError(
+                f"No analyzer {name!r}. list_analyzers shows them.", error_type="NotFound"
+            )
+        if not analyzer.supportsOneTimeAnalysis():
+            raise GhidraError(
+                f"{name} cannot run on its own; enable it and run full analysis instead.",
+                error_type="InvalidArgument",
+            )
+        chosen.append(analyzer)
+
+    tx = program.startTransaction("Run analyzers")
+    ok = False
+    GhidraScriptUtil.acquireBundleHostReference()
+    try:
+        everything = program.getMemory().getLoadedAndInitializedAddressSet()
+        for analyzer in chosen:
+            mgr.scheduleOneTimeAnalysis(analyzer, everything)
+        mgr.startAnalysis(TaskMonitor.DUMMY, False)
+        ok = True
+    finally:
+        GhidraScriptUtil.releaseBundleHostReference()
+        program.endTransaction(tx, ok)
 
 
 class FunctionScore(BaseModel):
@@ -107,23 +145,39 @@ def _score(gaps: list[str]) -> int:
 def register(mcp: FastMCP) -> None:
     @mcp.tool(annotations=ANNO_MUTATE, tags={"analysis"})
     @session.require_open
-    def run_auto_analysis() -> AnalysisRun:
-        """Run Ghidra's full auto-analysis again on the open program, and wait.
+    def run_auto_analysis(
+        analyzers: Annotated[
+            list[str],
+            Field(
+                description=(
+                    "Run only these analyzers (names from list_analyzers) over the whole "
+                    'program; empty runs full auto-analysis. Example: ["Decompiler Switch '
+                    'Analysis"]'
+                )
+            ),
+        ] = [],  # noqa: B006 -- pydantic copies the default; never mutated
+    ) -> AnalysisRun:
+        """Run Ghidra's auto-analysis again on the open program, and wait.
 
         Use after creating functions, applying types or patching, so analysis
         picks up the change across the program (reanalyze_range is the cheaper
-        choice for one range). It blocks this database until done, which takes
-        minutes on large binaries. Returns {functions_before, functions_after,
-        seconds}.
+        choice for one range). With analyzers, only those run; each must support
+        one-time runs (list_analyzers: one_time_supported). It blocks this
+        database until done, which takes minutes on large binaries. Returns
+        {functions_before, functions_after, seconds, analyzers}.
         """
         program = session.program
         before = program.getFunctionManager().getFunctionCount()
         start = time.monotonic()
-        analyze(program)
+        if analyzers:
+            _run_selected(program, analyzers)
+        else:
+            analyze(program)
         return AnalysisRun(
             functions_before=before,
             functions_after=program.getFunctionManager().getFunctionCount(),
             seconds=round(time.monotonic() - start, 2),
+            analyzers=list(analyzers),
         )
 
     @mcp.tool(annotations=ANNO_READ_ONLY, tags={"analysis"})

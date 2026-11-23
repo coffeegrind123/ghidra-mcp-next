@@ -11,6 +11,7 @@ signature and documentation.
 
 | Tool | Listed | What it does |
 |---|---|---|
+| `configure_analyzer` |  | Turn an analyzer on or off and change its settings. |
 | `find_decompiled_calls` |  | Find function call sites in the decompiled output. |
 | `find_register_value` |  | Compute a register's constant value just before an instruction executes. |
 | `get_analysis_problems` |  | List analysis problems found by Ghidra (ERROR and WARNING bookmarks). |
@@ -21,9 +22,10 @@ signature and documentation.
 | `get_switch_info` |  | Get switch/jump table structure at a computed jump instruction. |
 | `is_call_instruction` |  | Test whether the instruction at an address is a call (its flow type is a call). |
 | `is_return_instruction` |  | Test whether the instruction at an address ends the function (terminal flow). |
+| `list_analyzers` |  | List the program's auto-analysis analyzers with their settings. |
 | `list_switches` |  | Scan every function for computed-jump instructions (switch/jump tables), paginated. |
 | `reanalyze_range` |  | Disassemble from start_address to end_address, then rerun auto-analysis. |
-| `run_auto_analysis` |  | Run Ghidra's full auto-analysis again on the open program, and wait. |
+| `run_auto_analysis` |  | Run Ghidra's auto-analysis again on the open program, and wait. |
 | `score_documentation` |  | Rank functions by how much documentation they still need, worst first. |
 
 ## assembler
@@ -103,6 +105,7 @@ signature and documentation.
 | Tool | Listed | What it does |
 |---|---|---|
 | `add_function_range` |  | Add the range [start, end) to the body of the function containing function_address. |
+| `clear_flow_and_repair` |  | Clear the code reached from an address, then let Ghidra re-disassemble it. |
 | `delete_function` |  | Remove the function definition containing an address; instructions stay. |
 | `disassemble_function` | yes | List every instruction in the body of the function containing an address. |
 | `get_code_unit` |  | Classify what occupies an address: instruction, defined data or undefined bytes. |
@@ -113,9 +116,11 @@ signature and documentation.
 | `list_functions` | yes | List all functions in the database, paginated with optional regex filter. |
 | `remove_function_range` |  | Detach the body range that contains range_address from its function. |
 | `rename_function` |  | Rename the function containing an address. |
+| `set_flow_override` |  | Set or clear an instruction's flow override. |
 | `set_function_calling_convention` |  | Change only the calling convention of the function containing an address. |
 | `set_function_flags` |  | Set or clear noreturn, inline and library flags on the function containing an address. |
 | `set_function_prototype` |  | Set a function's full C prototype (return + args + calling convention). |
+| `set_variable_storage` |  | Move a parameter or local to different storage (register or stack slot). |
 
 ## lifecycle
 
@@ -187,6 +192,8 @@ signature and documentation.
 
 | Tool | Listed | What it does |
 |---|---|---|
+| `create_label` |  | Add a label at an address, alongside any it already has. |
+| `delete_label` |  | Remove one label from an address (function names are refused). |
 | `list_names` |  | List all named locations, paginated with optional regex filter. |
 | `rename_symbol` |  | Rename the primary symbol at an address, or create a label if it has none. |
 
