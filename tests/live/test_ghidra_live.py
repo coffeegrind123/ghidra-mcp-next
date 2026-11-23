@@ -177,6 +177,9 @@ async def _scenario(binary: Path) -> dict[str, Any]:
 
         out["scores"] = await rec.tool("score_documentation", include_locals=True, limit=5)
         out["rerun"] = await rec.tool("run_auto_analysis")
+        out["regvalue"] = await _register_value_cases(
+            rec, db, exclude={first["start"], second["start"]}
+        )
 
         out["save"] = await rec("save_database", database=db, comment="live test")
         await rec("close_database", database=db)
@@ -189,6 +192,65 @@ async def _scenario(binary: Path) -> dict[str, Any]:
         rec.database = reopened["database"]
         await rec("wait_for_analysis", database=rec.database)
         out["persisted"] = await rec.tool("get_function", address=second["start"])
+    return out
+
+
+# find_register_value cases, as x86-64 machine code patched over function entries:
+# (bytes, offset of the queried instruction, register, expected value or None)
+REGISTER_CASES = {
+    # mov eax, 7 ; nop: asking for the 64-bit register
+    "constant": ("b80700000090", 5, "RAX", "0x7"),
+    # same code, asking for the 32-bit register the instruction names
+    "subregister": ("b80700000090", 5, "EAX", "0x7"),
+    # mov eax, 5 ; mov eax, ebx ; nop: 5 was overwritten
+    "overwritten": ("b80500000089d890", 7, "RAX", None),
+    # mov eax, 5 ; mov eax, [rbx+0x10] ; nop: 0x10 is a displacement, not a value
+    "displacement": ("b8050000008b431090", 8, "RAX", None),
+}
+
+
+async def _register_value_cases(rec: Recorder, db: str, exclude: set[str]) -> dict[str, Any]:
+    picked = await rec(
+        "execute",
+        database=db,
+        read_only=True,
+        code=(
+            "out = []\n"
+            "for f in program.getFunctionManager().getFunctions(True):\n"
+            "    if f.isThunk() or f.isExternal() or f.getBody().getNumAddresses() < 32:\n"
+            "        continue\n"
+            "    out.append('0x' + str(f.getEntryPoint()).lstrip('0'))\n"
+            "return out[2:]"
+        ),
+    )
+    targets = [a for a in picked["result"] if a.lower() not in {e.lower() for e in exclude}]
+    results: dict[str, Any] = {}
+    for (name, (hexbytes, query_offset, register, _)), entry in zip(
+        REGISTER_CASES.items(), targets, strict=False
+    ):
+        base = int(entry, 16)
+        ops: list[dict[str, Any]] = [
+            {"tool": "patch_bytes", "params": {"address": entry, "hex_bytes": hexbytes}}
+        ]
+        offset = 0
+        for size in _instruction_sizes(hexbytes):
+            ops.append({"tool": "disassemble_at", "params": {"address": hex(base + offset)}})
+            offset += size
+        patched = await rec("batch", database=db, label=f"regcase {name}", ops=ops)
+        assert not patched["is_error"], patched
+        results[name] = await rec.tool(
+            "find_register_value", address=hex(base + query_offset), register_name=register
+        )
+    return results
+
+
+def _instruction_sizes(hexbytes: str) -> list[int]:
+    sizes = {"b8": 5, "89": 2, "8b": 3, "90": 1}
+    out, i = [], 0
+    while i < len(hexbytes):
+        size = sizes[hexbytes[i : i + 2]]
+        out.append(size)
+        i += size * 2
     return out
 
 
@@ -306,6 +368,18 @@ def test_documentation_scores_worst_first(run):
 
 def test_auto_analysis_reruns(run):
     assert run["rerun"]["functions_after"] >= run["rerun"]["functions_before"] > 0
+
+
+@pytest.mark.parametrize("case", sorted(REGISTER_CASES))
+def test_find_register_value(run, case):
+    expected = REGISTER_CASES[case][3]
+    got = run["regvalue"][case]
+    if expected is None:
+        assert got["found"] is False, got
+    else:
+        assert got["found"] is True, got
+        assert got["value"].lower() == expected
+        assert got["source_address"], got
 
 
 def test_save_reopen_from_project(run):

@@ -2,11 +2,12 @@
 #
 # SPDX-License-Identifier: MIT OR Apache-2.0
 
-"""Register value tracking tools (simplified).
+"""Register value at an instruction, by Ghidra's constant propagation.
 
-Full register tracking in Ghidra headless mode would require PCode
-emulation. This module provides a simplified heuristic that examines
-preceding instructions for scalar loads into the requested register.
+Runs ``SymbolicPropogator`` over the containing function (the same engine
+Ghidra's constant-propagation analyzer uses), which follows control flow,
+knows that writing EAX replaces RAX, and treats a memory load as unknown
+rather than mistaking its displacement for a value.
 """
 
 from __future__ import annotations
@@ -52,74 +53,89 @@ def register(mcp: FastMCP) -> None:
             ),
         ],
     ) -> FindRegisterValueResult:
-        """Guess a register's constant value at an instruction from the instructions before it.
+        """Compute a register's constant value just before an instruction executes.
 
-        Heuristic, not dataflow: scans back up to 32 instructions in address order for
-        the nearest one that writes the register and has a scalar operand, and reports
-        that scalar. Use it for quick constant recovery (e.g. a syscall number in EAX).
-        Returns address, register_name, found, and value plus source_address when found
-        or reason when not.
+        Runs Ghidra's constant propagation over the containing function, following
+        control flow, so a value overwritten by a non-constant (a register copy, a
+        memory load, a call result) is reported as unknown. Sub-registers work: EAX
+        after "mov eax, 7" is 0x7, and so is RAX on x86-64. A value relative to a
+        register (e.g. the stack pointer) is reported as unknown with the base named in
+        reason. Returns address, register_name, found, and value plus source_address
+        (the last instruction in the same basic block that wrote the register, when
+        there is one) when found, or reason when not.
         """
+        from ghidra.app.plugin.core.analysis import (  # noqa: PLC0415
+            ConstantPropagationContextEvaluator,
+        )
+        from ghidra.program.model.block import BasicBlockModel  # noqa: PLC0415
+        from ghidra.program.util import SymbolicPropogator  # noqa: PLC0415
+        from ghidra.util.task import TaskMonitor  # noqa: PLC0415
+
         program = session.program
-        listing = program.getListing()
         addr = resolve_address(address)
-
-        # Validate that the register exists for this processor
         lang = program.getLanguage()
-        reg = lang.getRegister(register_name)
+        reg = (
+            lang.getRegister(register_name)
+            or lang.getRegister(register_name.upper())
+            or lang.getRegister(register_name.lower())
+        )
         if reg is None:
-            # Try case-insensitive lookup
-            reg = lang.getRegister(register_name.upper())
-            if reg is None:
-                reg = lang.getRegister(register_name.lower())
-            if reg is None:
-                raise GhidraError(
-                    f"Unknown register: {register_name!r}",
-                    error_type="InvalidArgument",
-                )
-
-        # Walk backwards up to 32 instructions looking for a scalar assignment
-        current = listing.getInstructionAt(addr)
-        if current is None:
+            raise GhidraError(f"Unknown register: {register_name!r}", error_type="InvalidArgument")
+        if program.getListing().getInstructionAt(addr) is None:
             raise GhidraError(
-                f"No instruction at {format_address(addr.getOffset())}",
+                f"No instruction at {format_address(addr.getOffset())}", error_type="NotFound"
+            )
+        func = program.getFunctionManager().getFunctionContaining(addr)
+        if func is None:
+            raise GhidraError(
+                f"{format_address(addr.getOffset())} is not inside a function; create_function "
+                "first.",
                 error_type="NotFound",
             )
 
-        max_lookback = 32
-        insn = current.getPrevious()
-        for _ in range(max_lookback):
-            if insn is None:
-                break
+        def unknown(reason: str) -> FindRegisterValueResult:
+            return FindRegisterValueResult(
+                address=format_address(addr.getOffset()),
+                register_name=register_name,
+                found=False,
+                reason=reason,
+            )
 
-            # Check each operand: if the instruction writes to our register
-            # and has a scalar source, we found a candidate
-            num_operands = insn.getNumOperands()
-            for _op_idx in range(num_operands):
-                result_objs = insn.getResultObjects()
-                for obj in result_objs:
-                    # Check if this result is our target register
-                    if hasattr(obj, "getName") and obj.getName() == reg.getName():
-                        # Look for scalar input operands
-                        for inp_idx in range(num_operands):
-                            scalars = insn.getScalar(inp_idx)
-                            if scalars is not None:
-                                value = scalars.getUnsignedValue()
-                                return FindRegisterValueResult(
-                                    address=format_address(addr.getOffset()),
-                                    register_name=register_name,
-                                    found=True,
-                                    value=format_address(value),
-                                    source_address=format_address(insn.getAddress().getOffset()),
-                                )
-                        # Found write to register but no scalar source
-                        break
-
-            insn = insn.getPrevious()
+        propagator = SymbolicPropogator(program)
+        evaluator = ConstantPropagationContextEvaluator(TaskMonitor.DUMMY, True)
+        propagator.flowConstants(
+            func.getEntryPoint(), func.getBody(), evaluator, False, TaskMonitor.DUMMY
+        )
+        value = propagator.getRegisterValue(addr, reg)
+        if value is None:
+            return unknown("Not a constant here: no constant reaches this instruction.")
+        if value.isRegisterRelativeValue():
+            base = value.getRelativeRegister()
+            return unknown(f"Relative to {base.getName() if base else 'a register'}, not constant.")
 
         return FindRegisterValueResult(
             address=format_address(addr.getOffset()),
             register_name=register_name,
-            found=False,
-            reason="Could not determine value by backward scan (no scalar load found within 32 instructions)",
+            found=True,
+            value=format_address(value.getValue() & ((1 << reg.getBitLength()) - 1)),
+            source_address=_last_write_in_block(program, BasicBlockModel, addr, reg),
         )
+
+
+def _last_write_in_block(program, block_model_cls, addr, reg) -> str | None:
+    """The last instruction before *addr*, in its basic block, that writes *reg* (or a
+    register overlapping it)."""
+    block = block_model_cls(program).getFirstCodeBlockContaining(addr, None)
+    if block is None:
+        return None
+    insn = program.getListing().getInstructionAt(addr).getPrevious()
+    while insn is not None and block.contains(insn.getAddress()):
+        for obj in insn.getResultObjects():
+            if (
+                hasattr(obj, "contains")
+                and hasattr(obj, "getBaseRegister")
+                and (obj.contains(reg) or reg.contains(obj))
+            ):
+                return format_address(insn.getAddress().getOffset())
+        insn = insn.getPrevious()
+    return None
