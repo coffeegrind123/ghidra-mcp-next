@@ -85,6 +85,7 @@ signature and documentation.
 | `analyze_dataflow` |  | Follow a value through the decompiler's dataflow from one instruction. |
 | `decompile_function` | yes | Decompile the function containing an address to C pseudocode. |
 | `decompile_functions` |  | Decompile MANY functions in one call (expensive -- seconds each). |
+| `edit_decompiler_variables` |  | Rename and retype several decompiler variables of one function at once. |
 | `find_variable_accesses` |  | List every place a function reads or writes one decompiler variable. |
 | `get_decompiler_tokens` |  | Return the decompiler token tree for a function as a structured dict. |
 | `get_function_pcode` |  | Get a function's P-code, Ghidra's intermediate representation. |

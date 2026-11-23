@@ -17,8 +17,10 @@ import ast
 import asyncio
 import json
 import os
+import re
 import shutil
 import sys
+from itertools import pairwise
 from pathlib import Path
 from typing import Any
 
@@ -208,6 +210,7 @@ async def _scenario(binary: Path) -> dict[str, Any]:
         out["analysis"] = await _analysis_cases(rec, first, second)
         out["extras"] = await _extras_cases(rec, first, second)
         out["lists"] = await _list_cases(rec, second)
+        out["vars"] = await _variable_cases(rec, exclude={first["start"], second["start"]})
         out["markup"] = await _markup_cases(rec, db, second)
         out["types"] = await _type_cases(rec, db, exclude={first["start"], second["start"]})
         out["low"] = await _low_level_cases(rec, db, exclude={first["start"], second["start"]})
@@ -333,6 +336,97 @@ async def _analysis_cases(rec: Recorder, first: dict, second: dict) -> dict[str,
     out["cdiff_other"] = await rec.tool(
         "diff_functions", address_a=big, address_b=second["start"], level="decompiled"
     )
+    return out
+
+
+def _stack_slot(var: dict) -> tuple[int, int] | None:
+    m = re.fullmatch(r"Stack\[(-?0x[0-9a-fA-F]+)\]:(\d+)", var["storage"])
+    return (int(m.group(1), 16), int(m.group(2))) if m else None
+
+
+async def _variable_cases(rec: Recorder, exclude: set[str]) -> dict[str, Any]:
+    """Decompiler variable edits, on a function with a 4-byte stack local right
+    below another local (so widening it to 8 bytes overlaps the neighbour)."""
+    out: dict[str, Any] = {}
+    funcs = (await rec.tool("list_functions", limit=400))["items"]
+    for f in funcs:
+        if f["start"] in exclude:
+            continue
+        vs = await rec.tool("list_decompiler_variables", function_address=f["start"])
+        if vs.get("is_error"):
+            continue
+        local = [v for v in vs["variables"] if not v["is_param"] and _stack_slot(v)]
+        ordered = sorted(local, key=_stack_slot)
+        pair = next(
+            (
+                (a, b)
+                for a, b in pairwise(ordered)
+                if _stack_slot(a)[1] == 4 and _stack_slot(b)[0] == _stack_slot(a)[0] + 4
+            ),
+            None,
+        )
+        others = [v for v in local if pair and v["name"] not in (pair[0]["name"], pair[1]["name"])]
+        if pair and len(others) >= 2:
+            break
+    else:
+        return {"skipped": True}
+    fn = f["start"]
+    narrow, neighbour = pair
+    counts: dict[str, int] = {}
+    for v in vs["variables"]:
+        counts[v["storage"]] = counts.get(v["storage"], 0) + 1
+    shared = next((st for st, n in counts.items() if n > 1), None)
+    one, two = others[0], others[1]
+    out.update(fn=fn, narrow=narrow, neighbour=neighbour, one=one, two=two)
+    out["two_renames"] = await rec.tool(
+        "edit_decompiler_variables",
+        function_address=fn,
+        edits=[
+            {"name": one["name"], "new_name": "first_v"},
+            {"name": two["name"], "new_name": "second_v"},
+        ],
+    )
+    out["by_storage"] = await rec.tool(
+        "rename_decompiler_variable",
+        function_address=fn,
+        storage=one["storage"],
+        new_name="first_again",
+    )
+    out["rename_and_retype"] = await rec.tool(
+        "edit_decompiler_variables",
+        function_address=fn,
+        edits=[{"storage": two["storage"], "new_name": "buf_v", "new_type": "char *"}],
+    )
+    out["displace_refused"] = await rec.tool(
+        "retype_decompiler_variable",
+        function_address=fn,
+        variable_name=narrow["name"],
+        new_type="long",
+    )
+    out["after_refused"] = await rec.tool("list_decompiler_variables", function_address=fn)
+    out["unknown_storage"] = await rec.tool(
+        "rename_decompiler_variable", function_address=fn, storage="Stack[-0x7777]:4", new_name="x"
+    )
+    out["both_given"] = await rec.tool(
+        "rename_decompiler_variable",
+        function_address=fn,
+        old_name=narrow["name"],
+        storage=narrow["storage"],
+        new_name="x",
+    )
+    if shared:
+        out["shared_storage"] = await rec.tool(
+            "rename_decompiler_variable", function_address=fn, storage=shared, new_name="x"
+        )
+    out["displace_allowed"] = await rec.tool(
+        "retype_decompiler_variable",
+        function_address=fn,
+        variable_name=narrow["name"],
+        new_type="long",
+        allow_displace=True,
+    )
+    out["after_allowed"] = await rec.tool("list_decompiler_variables", function_address=fn)
+    await rec.tool("undo")
     return out
 
 
@@ -849,6 +943,34 @@ def test_import_references_and_ordinals(run):
     missing = x["import_missing"]
     assert missing["error_type"] == "NotFound" and "__libc_start_main" in missing["error"]
     assert all("ordinal" in i and "original_name" in i for i in x["imports"]["items"])
+
+
+def test_decompiler_variable_edits(run):
+    v = run["vars"]
+    assert not v.get("skipped"), "no function with adjacent stack locals in the sample"
+    for key in ("two_renames", "by_storage", "rename_and_retype", "displace_allowed"):
+        assert v[key].get("is_error") is not True, (key, v[key])
+    # Two renames planned from one snapshot both land.
+    assert [e["actual_name"] for e in v["two_renames"]["edits"]] == ["first_v", "second_v"]
+    assert v["two_renames"]["all_verified"] is True
+    assert v["by_storage"]["actual_name"] == "first_again" and v["by_storage"]["verified"]
+    (both,) = v["rename_and_retype"]["edits"]
+    assert both["actual_name"] == "buf_v" and both["actual_type"] == "char *"
+    # Widening a 4-byte local over its neighbour: refused, nothing changed ...
+    refused = v["displace_refused"]
+    assert refused["error_type"] == "EditDisplaced" and v["neighbour"]["name"] in refused["error"]
+    names = {x["name"]: x for x in v["after_refused"]["variables"]}
+    assert v["neighbour"]["name"] in names
+    assert names[v["narrow"]["name"]]["type"] == v["narrow"]["type"]
+    # ... unless asked, and then the deleted neighbour is reported.
+    allowed = v["displace_allowed"]
+    assert allowed["displaced"] == [v["neighbour"]["name"]] and allowed["actual_type"] == "long"
+    assert v["neighbour"]["name"] not in {x["name"] for x in v["after_allowed"]["variables"]}
+    assert v["unknown_storage"]["error_type"] == "NotFound"
+    assert v["narrow"]["storage"] in v["unknown_storage"]["error"]
+    assert v["both_given"]["error_type"] == "InvalidArguments"
+    if "shared_storage" in v:
+        assert v["shared_storage"]["error_type"] == "InvalidArguments"
 
 
 def test_signature_pages_neither_repeat_nor_skip(run):
