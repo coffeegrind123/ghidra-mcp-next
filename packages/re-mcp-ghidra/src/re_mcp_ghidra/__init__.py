@@ -85,6 +85,30 @@ def _platform_default_dirs() -> list[str]:
 _bootstrapped = False
 
 
+# Ghidra Server TLS trust. Since Ghidra 12.2 the client authenticates the
+# server's certificate, and a default Ghidra Server presents a self-issued one,
+# so connecting fails ("certificate_unknown") unless the client trusts it.
+SERVER_CACERTS_ENV = "GHIDRA_MCP_SERVER_CACERTS"
+SERVER_TRUST_LOOPBACK_ENV = "GHIDRA_MCP_SERVER_TRUST_LOOPBACK"
+
+
+def server_trust_vm_args() -> list[str]:
+    """JVM properties for Ghidra Server TLS trust, from the environment.
+
+    GHIDRA_MCP_SERVER_CACERTS: a CA or server certificate file (.pem, .crt,
+    .cer, .der or .jks) to trust; it replaces the OS and Java trust stores.
+    GHIDRA_MCP_SERVER_TRUST_LOOPBACK=1: accept any certificate from a server on
+    a loopback address (127.0.0.1); only where every local account is trusted.
+    """
+    args = []
+    cacerts = os.environ.get(SERVER_CACERTS_ENV, "").strip()
+    if cacerts:
+        args.append(f"-Dghidra.cacerts={os.path.expanduser(cacerts)}")
+    if os.environ.get(SERVER_TRUST_LOOPBACK_ENV, "").strip().lower() in ("1", "true", "yes", "on"):
+        args.append("-Dghidra.disable.loopback.server.authentication=true")
+    return args
+
+
 def bootstrap():
     """Ensure pyghidra is imported and the Ghidra JVM is started.
 
@@ -118,6 +142,7 @@ def bootstrap():
     _NATIVE_ACCESS_ARG = "--enable-native-access=ALL-UNNAMED"
     if _NATIVE_ACCESS_ARG not in launcher.vm_args:
         launcher.vm_args.append(_NATIVE_ACCESS_ARG)
+    launcher.vm_args.extend(server_trust_vm_args())
     launcher.start()
     log.info("pyghidra bootstrapped successfully")
 

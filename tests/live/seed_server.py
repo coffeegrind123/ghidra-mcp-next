@@ -12,11 +12,13 @@ import os
 import sys
 
 import pyghidra
+import re_mcp_ghidra
 
 
 def main() -> None:
     port, user, password, work, binary = sys.argv[1:6]
-    pyghidra.start(install_dir=os.environ["GHIDRA_INSTALL_DIR"])
+    # Same JVM setup as the server's workers, including Ghidra Server TLS trust.
+    re_mcp_ghidra.bootstrap()
 
     # Java packages exist only once the JVM has started.
     from ghidra.framework.client import ClientUtil, PasswordClientAuthenticator  # noqa: PLC0415

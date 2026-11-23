@@ -44,8 +44,8 @@ makes aborts deferred, undo impossible and save fail. See
 
 ## Requirements
 
-- Ghidra 12.0 or newer (CI tests 12.0.3 and 12.1.4)
-- JDK 21 (a JDK, not a JRE, to compile Java GhidraScripts)
+- Ghidra 12.0 or newer (CI tests 12.0.3, 12.1.4 and 12.2)
+- JDK 21 for Ghidra 12.0/12.1, JDK 25 for 12.2 (a JDK, not a JRE, to compile Java GhidraScripts)
 - Python 3.12+ and [uv](https://docs.astral.sh/uv/)
 
 ## Install
@@ -114,6 +114,8 @@ Every tool is listed in [docs/tools.md](docs/tools.md).
 |---|---|---|
 | `GHIDRA_INSTALL_DIR` | auto-detected | Ghidra installation |
 | `GHIDRA_MCP_SERVER_USER` / `GHIDRA_MCP_SERVER_PASSWORD` | `$USER` / unset | Ghidra Server credentials. Never accepted as tool arguments. |
+| `GHIDRA_MCP_SERVER_CACERTS` | unset | CA or server certificate (.pem/.crt/.cer/.der/.jks) to trust for Ghidra Server TLS; needed on Ghidra 12.2+ for a server with a self-issued certificate |
+| `GHIDRA_MCP_SERVER_TRUST_LOOPBACK` | unset | `1` accepts any certificate from a Ghidra Server on 127.0.0.1 (12.2+); only where every local account is trusted |
 | `GHIDRA_MCP_SHARED_PROJECTS` | `~/.local/share/ghidra-mcp-next/shared` | Local projects bound to server repositories |
 | `GHIDRA_MCP_SCRIPT_DIRS` | unset | Extra GhidraScript directories (`:`-separated), searched before `~/ghidra_scripts` and Ghidra's own |
 | `GHIDRA_MCP_DISABLE_EXECUTE` | unset | `1` removes `execute` (arbitrary Python in the server) |

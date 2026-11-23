@@ -66,6 +66,11 @@ def _wait_for(log: Path, pattern: str, proc: subprocess.Popen) -> None:
     raise RuntimeError(f"Ghidra Server never logged {pattern!r}:\n{log.read_text()[-3000:]}")
 
 
+# The test server presents a self-issued certificate on 127.0.0.1, which
+# Ghidra 12.2+ clients refuse unless loopback trust is turned on.
+os.environ["GHIDRA_MCP_SERVER_TRUST_LOOPBACK"] = "1"
+
+
 @pytest.fixture(scope="module")
 def ghidra_server(tmp_path_factory: pytest.TempPathFactory):
     work = tmp_path_factory.mktemp("server")
@@ -140,7 +145,7 @@ def ghidra_server(tmp_path_factory: pytest.TempPathFactory):
         _wait_for(log, rf"User '{READER}' added", proc)
         binary = work / "sample"
         shutil.copy(SAMPLE, binary)
-        seeded = subprocess.run(
+        seeded = subprocess.run(  # inherits TRUST_LOOPBACK from os.environ below
             [
                 sys.executable,
                 str(SEED),
