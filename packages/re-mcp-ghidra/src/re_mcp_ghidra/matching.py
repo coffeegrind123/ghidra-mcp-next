@@ -315,12 +315,30 @@ def classify_changes(
 ) -> tuple[list[dict], int]:
     """Changed pairs, most changed first, and the number of identical pairs.
 
-    A pair changed when its hashes differ (a fuzzy match: "code"), its callee
-    identities differ ("callees": catches a swapped call target with
-    otherwise identical code), its body size differs ("size"), or, when body
-    digests were taken, its bytes differ ("bytes": address-dependent, so
-    noisy on relinked images; an unreadable body counts as differing).
+    A pair changed when its hashes differ (a fuzzy match: "code"), its callees
+    differ ("callees": catches a swapped call target with otherwise identical
+    code), its body size differs ("size"), or, when body digests were taken,
+    its bytes differ ("bytes": address-dependent, so noisy on relinked
+    images; an unreadable body counts as differing). A callee that is itself
+    matched compares as its pair, so renaming it on one side (or changing its
+    code) does not make its callers look changed; others compare by name, or
+    by Function ID hash when unnamed.
     """
+    to_target = {m["source"]["address"]: m["target"]["address"] for m in matches}
+    matched_targets = set(to_target.values())
+
+    def keyed(callees: list[dict], side: str) -> dict[str, str]:
+        out = {}
+        for c in callees:
+            if side == "source" and c["address"] in to_target:
+                key = "pair:" + to_target[c["address"]]
+            elif side == "target" and c["address"] in matched_targets:
+                key = "pair:" + c["address"]
+            else:
+                key = c["identity"]
+            out[key] = c["name"]
+        return out
+
     changed, identical = [], 0
     for m in matches:
         a = src_facts.get(m["source"]["address"], {})
@@ -328,8 +346,9 @@ def classify_changes(
         kinds = []
         if m.get("method") == "fuzzy":
             kinds.append("code")
-        added = sorted(set(b.get("callees", [])) - set(a.get("callees", [])))
-        removed = sorted(set(a.get("callees", [])) - set(b.get("callees", [])))
+        ka, kb = keyed(a.get("callees", []), "source"), keyed(b.get("callees", []), "target")
+        added = sorted(kb[k] for k in kb.keys() - ka.keys())
+        removed = sorted(ka[k] for k in ka.keys() - kb.keys())
         if added or removed:
             kinds.append("callees")
         size_delta = b.get("size", 0) - a.get("size", 0)

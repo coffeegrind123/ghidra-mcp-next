@@ -557,9 +557,7 @@ def register(mcp: FastMCP) -> None:
             fact = {
                 "address": format_address(func.getEntryPoint().getOffset()),
                 "size": int(body.getNumAddresses()),
-                "callees": sorted(
-                    {_callee_identity(c) for c in func.getCalledFunctions(TaskMonitor.DUMMY)}
-                ),
+                "callees": [_callee_fact(c) for c in func.getCalledFunctions(TaskMonitor.DUMMY)],
             }
             if body_bytes:
                 digest = hashlib.sha256()
@@ -651,6 +649,19 @@ def register(mcp: FastMCP) -> None:
         finally:
             src.close()
         return {"added": added, "kept_existing": kept}
+
+
+def _callee_fact(callee) -> dict[str, str]:
+    """Where a call lands (through thunks), its name, and a naming-independent id."""
+    from re_mcp_ghidra.tools.program_analysis import _resolve_thunk  # noqa: PLC0415
+
+    real = _resolve_thunk(callee)
+    entry = real.getEntryPoint()
+    return {
+        "address": str(entry) if real.isExternal() else format_address(entry.getOffset()),
+        "name": str(real.getName()),
+        "identity": _callee_identity(callee),
+    }
 
 
 def _callee_identity(callee) -> str:

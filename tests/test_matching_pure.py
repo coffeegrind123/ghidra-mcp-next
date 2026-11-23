@@ -116,11 +116,13 @@ def test_classify_changes_kinds_and_order():
         _pair("0x12", "0x22", "fuzzy", 0.8),  # changed code and grew
         _pair("0x13", "0x23"),  # same hash, bytes differ (relocation)
     ]
-    same = {"size": 10, "callees": ["name:a"], "body": "x"}
+    a_call = [{"address": "0x90", "name": "a", "identity": "name:a"}]
+    b_call = [{"address": "0x91", "name": "b", "identity": "name:b"}]
+    same = {"size": 10, "callees": a_call, "body": "x"}
     src = {"0x10": same, "0x11": same, "0x12": same, "0x13": same}
     dst = {
         "0x20": same,
-        "0x21": {**same, "callees": ["name:b"]},
+        "0x21": {**same, "callees": b_call},
         "0x22": {**same, "size": 14},
         "0x23": {**same, "body": "y"},
     }
@@ -130,7 +132,7 @@ def test_classify_changes_kinds_and_order():
     assert changed[0]["change_types"] == ["code", "size"] and changed[0]["size_delta"] == 4
     assert changed[0]["similarity"] == 0.8
     assert changed[1]["change_types"] == ["callees"]
-    assert changed[1]["callees_added"] == ["name:b"] and changed[1]["callees_removed"] == ["name:a"]
+    assert changed[1]["callees_added"] == ["b"] and changed[1]["callees_removed"] == ["a"]
     assert changed[2]["change_types"] == ["bytes"]
 
 
@@ -153,3 +155,26 @@ def test_unmatched_counts_small_functions():
     out = unmatched(items, {"0x1"})
     assert out["total"] == 2 and out["too_small"] == 1
     assert [i["name"] for i in out["items"]] == ["b", "c"]
+
+
+def test_callees_compare_through_the_match_not_their_names():
+    # The callee was renamed in the source only (and its code changed, so its
+    # hash-based identity differs too); it is still the matched pair 0x30 -> 0x40.
+    matches = [_pair("0x10", "0x20"), _pair("0x30", "0x40", "fuzzy", 0.9)]
+    src = {
+        "0x10": {
+            "size": 8,
+            "callees": [{"address": "0x30", "name": "parse", "identity": "name:parse"}],
+        },
+        "0x30": {"size": 8, "callees": []},
+    }
+    dst = {
+        "0x20": {
+            "size": 8,
+            "callees": [{"address": "0x40", "name": "FUN_00000040", "identity": "fid:ab12"}],
+        },
+        "0x40": {"size": 8, "callees": []},
+    }
+    changed, identical = classify_changes(matches, src, dst)
+    assert identical == 1
+    assert [c["target"]["address"] for c in changed] == ["0x40"]
