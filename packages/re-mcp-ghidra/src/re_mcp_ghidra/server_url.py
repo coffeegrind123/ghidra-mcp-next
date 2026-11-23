@@ -15,9 +15,20 @@ GHIDRA_URL_SCHEME = "ghidra://"
 DEFAULT_SERVER_PORT = 13100  # Ghidra Server's default RMI registry port
 
 
+def parse_server_address(server: str) -> tuple[str, int]:
+    """``host[:port]`` or ``ghidra://host[:port]`` -> (host, port)."""
+    parts = urlsplit(server if "://" in server else f"ghidra://{server}")
+    if not parts.hostname:
+        raise GhidraError(
+            f"Not a Ghidra Server address: {server!r}. Expected host[:port].",
+            error_type="InvalidArgument",
+        )
+    return parts.hostname, parts.port or DEFAULT_SERVER_PORT
+
+
 @dataclass(frozen=True)
 class ServerProgram:
-    """``ghidra://host[:port]/repository/folder/program``."""
+    """``ghidra://host[:port]/repository/folder/program`` (path ``"/"`` for a repository)."""
 
     host: str
     port: int
@@ -30,13 +41,23 @@ class ServerProgram:
         return f"{self.host}_{self.port}_{self.repository}".replace(":", "_")
 
 
-def parse_server_url(url: str) -> ServerProgram:
+def parse_server_url(url: str, *, require_path: bool = True) -> ServerProgram:
+    """Parse ``ghidra://host[:port]/repository[/folder/program]``.
+
+    With *require_path* false, the path may be absent (it is then ``"/"``):
+    a URL naming just a repository, or a folder in one.
+    """
     parts = urlsplit(url)
     segments = [s for s in parts.path.split("/") if s]
-    if parts.scheme != "ghidra" or not parts.hostname or len(segments) < 2:
+    if (
+        parts.scheme != "ghidra"
+        or not parts.hostname
+        or not segments
+        or (require_path and len(segments) < 2)
+    ):
+        shape = "folder/program" if require_path else "[folder/...]"
         raise GhidraError(
-            f"Not a Ghidra Server program URL: {url!r}. Expected "
-            "ghidra://host[:port]/repository/folder/program.",
+            f"Not a Ghidra Server URL: {url!r}. Expected ghidra://host[:port]/repository/{shape}.",
             error_type="InvalidArgument",
         )
     return ServerProgram(

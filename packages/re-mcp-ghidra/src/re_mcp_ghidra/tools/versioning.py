@@ -45,6 +45,12 @@ class VersionHistory(BaseModel):
     versions: list[VersionEntry] = Field(description="Oldest first.")
 
 
+class AddedToRepository(BaseModel):
+    url: str = Field(description="ghidra:// URL of the new versioned file; open_database opens it.")
+    version: int = Field(description="Its server version (1 for a new file).")
+    checked_out: bool = Field(description="Whether you kept a checkout of it.")
+
+
 class CheckoutEntry(BaseModel):
     checkout_id: int = Field(description="Server checkout id.")
     user: str = Field(description="Who holds it.")
@@ -256,3 +262,75 @@ def register(mcp: FastMCP) -> None:
                 for c in df.getCheckouts()
             ],
         )
+
+    @mcp.tool(annotations=ANNO_MUTATE, tags={"versioning"})
+    @session.require_open
+    def add_to_repository(
+        repository: Annotated[
+            str,
+            Field(
+                description=(
+                    "Repository URL plus the folder to put the program in (folders are "
+                    'created). Example: "ghidra://re-server/firmware/v2"'
+                )
+            ),
+        ],
+        comment: Annotated[
+            str,
+            Field(description='Version 1 comment. Example: "initial import, analyzed"'),
+        ] = "initial import",
+        name: Annotated[
+            str,
+            Field(
+                description=(
+                    "File name in the repository; empty keeps the program's name. "
+                    'Example: "app_v2.bin"'
+                )
+            ),
+        ] = "",
+        keep_checked_out: Annotated[
+            bool,
+            Field(description="Keep a checkout of the new file. Example: false"),
+        ] = False,
+    ) -> AddedToRepository:
+        """Put the open program, with its analysis and annotations, under version control.
+
+        Use to share a binary you imported locally: it saves the program, copies
+        the saved file into the repository folder and adds it as version 1. The
+        open database stays the local copy; open the returned url with
+        open_database to keep working on the shared one. Fails with
+        AlreadyExists if the path is taken. Returns {url, version, checked_out}.
+        """
+        from ghidra.util.task import TaskMonitor  # noqa: PLC0415
+
+        from re_mcp_ghidra.server_projects import shared_project  # noqa: PLC0415
+        from re_mcp_ghidra.server_url import parse_server_url  # noqa: PLC0415
+
+        target = parse_server_url(repository, require_path=False)
+        source = session.domain_file
+        file_name = name or str(source.getName())
+        if session.program.isChanged():
+            session.save("before add_to_repository")
+
+        project = shared_project(target)
+        try:
+            folder = project.getProjectData().getRootFolder()
+            for part in [p for p in target.path.split("/") if p]:
+                folder = folder.getFolder(part) or folder.createFolder(part)
+            if folder.getFile(file_name) is not None:
+                raise GhidraError(
+                    f"{target.path.rstrip('/')}/{file_name} already exists in {target.repository}.",
+                    error_type="AlreadyExists",
+                )
+            copied = source.copyTo(folder, TaskMonitor.DUMMY)
+            if str(copied.getName()) != file_name:
+                copied = copied.setName(file_name)
+            copied.addToVersionControl(comment, keep_checked_out, TaskMonitor.DUMMY)
+            path = str(copied.getPathname())
+            return AddedToRepository(
+                url=f"ghidra://{target.host}:{target.port}/{target.repository}{path}",
+                version=int(copied.getLatestVersion()),
+                checked_out=bool(copied.isCheckedOut()),
+            )
+        finally:
+            project.close()

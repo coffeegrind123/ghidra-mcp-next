@@ -169,6 +169,69 @@ async def _scenario(work: Path) -> dict[str, Any]:
         await call("batch", database=db, ops=[discard])
         out["undo_checkout"] = await tool("undo_checkout")
         out["after_undo"] = await tool("get_function", address=first["start"])
+        await call("close_database", database=db)
+
+        # Repository management and sharing a local program.
+        server = f"127.0.0.1:{SERVER_PORT}"
+        out["created"] = await call(
+            "call", tool="create_repository", arguments={"server": server, "name": "shared"}
+        )
+        out["create_again"] = await call(
+            "call", tool="create_repository", arguments={"server": server, "name": "shared"}
+        )
+        out["repos"] = await call("call", tool="list_repositories", arguments={"server": server})
+
+        local = work / "local" / "sample"
+        local.parent.mkdir()
+        shutil.copy(SAMPLE, local)
+        ldb = (await call("open_database", file_path=str(local), run_auto_analysis=True))[
+            "database"
+        ]
+        await call("wait_for_analysis", database=ldb)
+        lfirst = (await call("call", tool="list_functions", arguments={"limit": 1}, database=ldb))[
+            "items"
+        ][0]
+        await call(
+            "batch",
+            database=ldb,
+            ops=[
+                {
+                    "tool": "rename_function",
+                    "params": {"address": lfirst["start"], "new_name": "shared_name"},
+                }
+            ],
+        )
+        out["added"] = await call(
+            "call",
+            tool="add_to_repository",
+            database=ldb,
+            arguments={"repository": f"ghidra://{server}/shared/imports", "comment": "from local"},
+        )
+        out["add_again"] = await call(
+            "call",
+            tool="add_to_repository",
+            database=ldb,
+            arguments={"repository": f"ghidra://{server}/shared/imports"},
+        )
+        out["in_batch"] = await call(
+            "batch",
+            database=ldb,
+            ops=[
+                {"tool": "add_to_repository", "params": {"repository": f"ghidra://{server}/shared"}}
+            ],
+        )
+        out["files"] = await call(
+            "call",
+            tool="list_repository_files",
+            arguments={"repository": f"ghidra://{server}/shared"},
+        )
+        await call("close_database", database=ldb)
+
+        sdb = (await call("open_database", file_path=out["added"]["url"]))["database"]
+        await call("wait_for_analysis", database=sdb)
+        out["shared_func"] = await call(
+            "call", tool="get_function", arguments={"address": lfirst["start"]}, database=sdb
+        )
     return out
 
 
@@ -199,3 +262,24 @@ def test_checkin_creates_a_version(run):
 def test_undo_checkout_discards_later_changes(run):
     assert run["undo_checkout"]["checked_out"] is False
     assert run["after_undo"]["name"] == "vc_named"
+
+
+def test_create_and_list_repositories(run):
+    assert run["created"]["repository"] == "shared"
+    assert run["create_again"]["error_type"] == "AlreadyExists"
+    assert {"testrepo", "shared"} <= set(run["repos"]["repositories"])
+
+
+def test_add_local_program_to_repository(run):
+    added = run["added"]
+    assert added["url"].endswith("/shared/imports/sample")
+    assert added["version"] == 1
+    assert run["add_again"]["error_type"] == "AlreadyExists"
+    assert run["in_batch"]["error_type"] == "InvalidOp"
+    paths = [f["path"] for f in run["files"]["files"]]
+    assert "/imports/sample" in paths
+    assert "/imports" in run["files"]["folders"]
+
+
+def test_shared_copy_keeps_annotations(run):
+    assert run["shared_func"]["name"] == "shared_name"

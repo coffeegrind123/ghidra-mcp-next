@@ -249,6 +249,8 @@ class GhidraBackend:
 
             return _list(project)
 
+        _register_repository_tools(mcp)
+
     @staticmethod
     def register_prompts(mcp: FastMCP) -> None:
         from re_mcp_ghidra.prompts import register_all  # noqa: PLC0415
@@ -322,3 +324,70 @@ def _list_ghidra_targets(ghidra_dir: str) -> dict:
                 continue
 
     return {"languages": languages}
+
+
+_SERVER_ADDRESS = Annotated[
+    str,
+    Field(
+        description=(
+            "Ghidra Server as host[:port] (default port 13100); credentials come from "
+            'GHIDRA_MCP_SERVER_USER / GHIDRA_MCP_SERVER_PASSWORD. Example: "re-server:13100"'
+        )
+    ),
+]
+
+
+def _register_repository_tools(mcp: FastMCP) -> None:
+    """Ghidra Server repository tools.
+
+    They need no open database, so they live on the supervisor; each call runs
+    a short-lived JVM (re_mcp_ghidra.server_admin), taking several seconds.
+    """
+    from re_mcp_ghidra.server_admin import run_admin  # noqa: PLC0415
+
+    @mcp.tool(annotations={"title": "List Repositories", "readOnlyHint": True})
+    async def list_repositories(server: _SERVER_ADDRESS) -> dict:
+        """List the repositories on a Ghidra Server that the configured user can see.
+
+        Use before opening a server program or adding one, to find the repository
+        name. Takes several seconds (it starts a JVM). Returns {server,
+        repositories: [names]}.
+        """
+        return await run_admin("list-repositories", server)
+
+    @mcp.tool(annotations={"title": "Create Repository"})
+    async def create_repository(
+        server: _SERVER_ADDRESS,
+        name: Annotated[
+            str,
+            Field(description='New repository name. Example: "firmware"'),
+        ],
+    ) -> dict:
+        """Create a repository on a Ghidra Server; the configured user becomes its admin.
+
+        Use to give a new binary a shared home, then add_to_repository to put a
+        program in it. Fails with AlreadyExists if the name is taken. Returns
+        {server, repository, url, repositories}.
+        """
+        return await run_admin("create-repository", server, name)
+
+    @mcp.tool(annotations={"title": "List Repository Files", "readOnlyHint": True})
+    async def list_repository_files(
+        repository: Annotated[
+            str,
+            Field(
+                description=(
+                    "Repository URL, optionally with a folder to start from. "
+                    'Example: "ghidra://re-server/firmware" or '
+                    '"ghidra://re-server/firmware/v2"'
+                )
+            ),
+        ],
+    ) -> dict:
+        """List every folder and versioned file in a Ghidra Server repository.
+
+        Use to find the program path for open_database(file_path="ghidra://...").
+        Takes several seconds (it starts a JVM). Returns {repository, folders,
+        files: [{path, version, content_type}]}.
+        """
+        return await run_admin("list-files", repository)

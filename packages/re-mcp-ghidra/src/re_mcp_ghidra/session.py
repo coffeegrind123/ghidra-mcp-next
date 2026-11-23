@@ -23,13 +23,6 @@ from re_mcp_ghidra.server_url import GHIDRA_URL_SCHEME, ServerProgram, parse_ser
 log = logging.getLogger(__name__)
 
 _PROJECT_SUBDIR = "ghidra_projects"
-SERVER_USER_ENV = "GHIDRA_MCP_SERVER_USER"
-SERVER_PASSWORD_ENV = "GHIDRA_MCP_SERVER_PASSWORD"
-# Local projects bound to Ghidra Server repositories (one per host/port/repo).
-SHARED_PROJECTS_DIR = os.environ.get(
-    "GHIDRA_MCP_SHARED_PROJECTS",
-    os.path.join(os.path.expanduser("~"), ".local", "share", "ghidra-mcp-next", "shared"),
-)
 _PROJECT_EXT = ".gpr"
 
 
@@ -180,53 +173,15 @@ class Session:
     def _open_from_server(target: ServerProgram):
         """Open a program from a Ghidra Server repository.
 
-        The repository is bound to a local shared project under
-        :data:`SHARED_PROJECTS_DIR` (created on first use, reused after), which
-        is where checked-out copies live.  The program opens read-only until it
-        is checked out.
+        The repository is bound to a local shared project (see
+        :func:`re_mcp_ghidra.server_projects.shared_project`), which is where
+        checked-out copies live.  The program opens read-only until checkout.
         """
         import pyghidra  # noqa: PLC0415
-        from ghidra.framework.client import (  # noqa: PLC0415
-            ClientUtil,
-            PasswordClientAuthenticator,
-        )
-        from ghidra.framework.model import ProjectLocator  # noqa: PLC0415
-        from ghidra.pyghidra import PyGhidraProjectManager  # noqa: PLC0415
 
-        user = os.environ.get(SERVER_USER_ENV) or os.environ.get("USER", "")
-        password = os.environ.get(SERVER_PASSWORD_ENV)
-        if password is None:
-            raise GhidraError(
-                f"Set {SERVER_PASSWORD_ENV} (and {SERVER_USER_ENV}) in the server's "
-                "environment to connect to a Ghidra Server. Passwords are never taken "
-                "as tool arguments.",
-                error_type="NoCredentials",
-            )
-        ClientUtil.setClientAuthenticator(PasswordClientAuthenticator(user, password))
+        from re_mcp_ghidra.server_projects import shared_project  # noqa: PLC0415
 
-        server = ClientUtil.getRepositoryServer(target.host, target.port, True)
-        if server is None or not server.isConnected():
-            raise GhidraError(
-                f"Cannot connect to Ghidra Server {target.host}:{target.port} as {user!r}.",
-                error_type="ServerUnavailable",
-            )
-        repo = server.getRepository(target.repository)
-        if repo is None:
-            names = ", ".join(str(n) for n in server.getRepositoryNames())
-            raise GhidraError(
-                f"No repository {target.repository!r} on {target.host} (has: {names}).",
-                error_type="NotFound",
-            )
-        repo.connect()
-
-        os.makedirs(SHARED_PROJECTS_DIR, exist_ok=True)
-        locator = ProjectLocator(SHARED_PROJECTS_DIR, target.key)
-        manager = PyGhidraProjectManager()
-        if locator.exists():
-            project = manager.openProject(locator, False, True)
-        else:
-            project = manager.createProject(locator, repo, False)
-
+        project = shared_project(target)
         try:
             prog, consumer = pyghidra.consume_program(project, target.path)
         except FileNotFoundError as exc:

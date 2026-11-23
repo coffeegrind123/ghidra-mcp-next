@@ -64,6 +64,10 @@ NOT_IN_TRANSACTION = frozenset(
         "run_auto_analysis",
         "set_image_base",
         "run_ghidra_script",
+        "checkout_file",
+        "checkin_file",
+        "undo_checkout",
+        "add_to_repository",
         "_batch",
         "_execute",
     }
