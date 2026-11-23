@@ -54,11 +54,11 @@ Ported:
 | find_constant_uses (all operand objects), search_comments, find_function_candidates | 345c655 |
 | run_ghidra_script time limit with rollback, file-backed capped output | d2feb48 |
 | Not-found errors list close names; "code but no function" hint | b71a870 |
+| set_decompiler_comment(line=) places comments by decompiled line | ea039c0 |
+| get_call_graph direction/depth/cycle markers/truncation; find_common_callers (counts imports) | 89d28fd |
 
-Left (priority order): set_decompiler_comment(line=); dataflow stops typed and located,
-find_variable_accesses; vtable tools (needs ReVa's Apache-2.0 C++ test fixtures);
-get_call_graph direction/depth/cycle markers and find_common_callers; decompiled-level
-diff and a program change summary; list filters and import ordinals. MAYBE and SKIP lists
+Left (priority order): dataflow stops typed and located, find_variable_accesses; vtable
+tools (needs ReVa's Apache-2.0 C++ test fixtures); decompiled-level diff and a program change summary; list filters and import ordinals. MAYBE and SKIP lists
 in the spec.
 
 ## cellebrite-labs/ghidra-rpc
