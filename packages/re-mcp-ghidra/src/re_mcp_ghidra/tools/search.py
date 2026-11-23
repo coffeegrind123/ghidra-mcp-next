@@ -16,7 +16,6 @@ from re_mcp_ghidra.helpers import (
     ANNO_READ_ONLY,
     Address,
     FilterPattern,
-    HexBytes,
     Limit,
     Offset,
     compile_filter,
@@ -51,6 +50,35 @@ class StringCodeRef(BaseModel):
     code_address: str
     function_name: str
     function_address: str
+
+
+def _parse_pattern(pattern: str) -> tuple[bytes, bytes]:
+    """'55 8B ?? 4?' -> (values, masks); a mask bit 0 means "any"."""
+    clean = pattern.replace(" ", "")
+    if not clean or len(clean) % 2 != 0:
+        raise GhidraError(
+            "Pattern needs an even number of hex digits or ? wildcards.",
+            error_type="InvalidArgument",
+        )
+    values, masks = bytearray(), bytearray()
+    for i in range(0, len(clean), 2):
+        value = mask = 0
+        for shift, ch in ((4, clean[i]), (0, clean[i + 1])):
+            if ch == "?":
+                continue
+            try:
+                value |= int(ch, 16) << shift
+            except ValueError:
+                raise GhidraError(
+                    f"Invalid character {ch!r} in pattern {pattern!r}.",
+                    error_type="InvalidArgument",
+                ) from None
+            mask |= 0xF << shift
+        values.append(value)
+        masks.append(mask)
+    if not any(masks):
+        raise GhidraError("Pattern is all wildcards.", error_type="InvalidArgument")
+    return bytes(values), bytes(masks)
 
 
 def register(mcp: FastMCP) -> None:
@@ -164,36 +192,36 @@ def register(mcp: FastMCP) -> None:
     @mcp.tool(annotations=ANNO_READ_ONLY, tags={"search"})
     @session.require_open
     def search_bytes(
-        pattern: HexBytes,
+        pattern: Annotated[
+            str,
+            Field(
+                description=(
+                    "Hex bytes, spaces optional; ?? matches any byte and ? any nibble "
+                    '(4? = 0x40-0x4F). Example: "55 8B EC 83 EC ?? 8B 45 ?8"'
+                )
+            ),
+        ],
         start_address: Address = "",
         limit: Limit = 20,
     ) -> list[SearchBytesMatch]:
-        """Find occurrences of an exact byte sequence in program memory.
+        """Find a byte pattern in program memory, with optional wildcards.
 
-        No wildcards. Searches forward from start_address (empty = lowest address);
-        use search_text for disassembly text, list_strings for defined strings.
-        Returns up to limit matches, each with address and function (containing
-        function name, empty if none).
+        Use for signatures and code idioms (?? for bytes that vary, like
+        immediates or displacements). Searches forward from start_address (empty =
+        lowest address); use search_text for disassembly text, list_strings for
+        defined strings. Returns up to limit matches, each with address and
+        function (containing function name, empty if none).
         """
         program = session.program
         mem = program.getMemory()
         func_mgr = program.getFunctionManager()
-
-        clean = pattern.replace(" ", "")
-        if len(clean) % 2 != 0:
-            raise GhidraError(
-                "Hex pattern must have even number of hex digits", error_type="InvalidArgument"
-            )
-        try:
-            search_bytes = bytes.fromhex(clean)
-        except ValueError as e:
-            raise GhidraError(f"Invalid hex pattern: {e}", error_type="InvalidArgument") from e
+        values, masks = _parse_pattern(pattern)
+        exact = all(m == 0xFF for m in masks)
 
         addr = resolve_address(start_address) if start_address else mem.getMinAddress()
-
         results = []
         for _ in range(limit):
-            found = mem.findBytes(addr, search_bytes, None, True, None)
+            found = mem.findBytes(addr, values, None if exact else masks, True, None)
             if found is None:
                 break
             func = func_mgr.getFunctionContaining(found)

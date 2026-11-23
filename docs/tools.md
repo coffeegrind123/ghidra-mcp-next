@@ -12,11 +12,13 @@ signature and documentation.
 | Tool | Listed | What it does |
 |---|---|---|
 | `configure_analyzer` |  | Turn an analyzer on or off and change its settings. |
+| `find_code_gaps` |  | Find executable bytes that belong to no function (missed code). |
 | `find_decompiled_calls` |  | Find function call sites in the decompiled output. |
 | `find_register_value` |  | Compute a register's constant value just before an instruction executes. |
 | `get_analysis_problems` |  | List analysis problems found by Ghidra (ERROR and WARNING bookmarks). |
 | `get_basic_blocks` |  | Get basic blocks of a function (CFG nodes with successor/predecessor lists). |
 | `get_cfg_edges` |  | Get CFG edges as (source, target) pairs (compact, for graph visualization). |
+| `get_function_metrics` |  | Measure functions: size, blocks, complexity, loops, calls, callers, strings. |
 | `get_processor_info` |  | Describe the program's processor: language ID, pointer size, endianness, registers. |
 | `get_register_name` |  | Map a register-space offset and size to the register's name. |
 | `get_switch_info` |  | Get switch/jump table structure at a computed jump instruction. |
@@ -70,9 +72,11 @@ signature and documentation.
 
 | Tool | Listed | What it does |
 |---|---|---|
+| `analyze_dataflow` |  | Follow a value through the decompiler's dataflow from one instruction. |
 | `decompile_function` | yes | Decompile the function containing an address to C pseudocode. |
 | `decompile_functions` |  | Decompile MANY functions in one call (expensive -- seconds each). |
 | `get_decompiler_tokens` |  | Return the decompiler token tree for a function as a structured dict. |
+| `get_function_pcode` |  | Get a function's P-code, Ghidra's intermediate representation. |
 | `get_function_vars` |  | Decompile the function containing an address and list its typed locals and params. |
 | `list_decompiler_variables` |  | List decompiler locals and parameters for a function. |
 | `rename_decompiler_variable` |  | Rename a local variable or parameter in a function's decompiled output. |
@@ -107,20 +111,25 @@ signature and documentation.
 | `add_function_range` |  | Add the range [start, end) to the body of the function containing function_address. |
 | `clear_flow_and_repair` |  | Clear the code reached from an address, then let Ghidra re-disassemble it. |
 | `delete_function` |  | Remove the function definition containing an address; instructions stay. |
+| `diff_functions` |  | Diff two functions instruction by instruction. |
 | `disassemble_function` | yes | List every instruction in the body of the function containing an address. |
 | `get_code_unit` |  | Classify what occupies an address: instruction, defined data or undefined bytes. |
 | `get_function` | yes | Describe the function containing an address: bounds, signature and flags. |
 | `get_function_prototype` |  | Get the full type signature (prototype) of a function. |
 | `get_stack_frame` |  | Show the listing stack-frame layout of the function containing an address. |
+| `list_class_members` |  | List the methods of a C++ class. |
 | `list_function_ranges` |  | List all address ranges (ranges) in a function body. |
+| `list_function_tags` |  | List function tags with how many functions carry each. |
 | `list_functions` | yes | List all functions in the database, paginated with optional regex filter. |
 | `remove_function_range` |  | Detach the body range that contains range_address from its function. |
 | `rename_function` |  | Rename the function containing an address. |
 | `set_flow_override` |  | Set or clear an instruction's flow override. |
 | `set_function_calling_convention` |  | Change only the calling convention of the function containing an address. |
+| `set_function_class` |  | Make a function a method of a C++ class. |
 | `set_function_flags` |  | Set or clear noreturn, inline and library flags on the function containing an address. |
 | `set_function_prototype` |  | Set a function's full C prototype (return + args + calling convention). |
 | `set_variable_storage` |  | Move a parameter or local to different storage (register or stack slot). |
+| `tag_function` |  | Add or remove tags on a function (free-form labels for grouping). |
 
 ## lifecycle
 
@@ -134,12 +143,16 @@ signature and documentation.
 | `list_databases` | yes | List the databases open in this server. |
 | `list_project_files` | yes | List the folders and files stored in an existing Ghidra project. |
 | `list_repositories` |  | List the repositories on a Ghidra Server that the configured user can see. |
+| `list_repository_checkouts` |  | List every checkout in a repository (or folder), by anyone. |
 | `list_repository_files` |  | List every folder and versioned file in a Ghidra Server repository. |
+| `list_server_users` |  | List the user accounts on a Ghidra Server. |
 | `list_targets` | yes | List the processor languages and compiler specs this Ghidra supports. |
 | `match_functions` |  | Find the same functions in two open databases by hash (e.g. two builds). |
 | `open_database` | yes | Open a binary, or a program in an existing Ghidra project. |
 | `propagate_documentation` |  | Copy names, prototypes and comments to the matching functions of another database. |
 | `save_database` | yes | Write the program's changes to its Ghidra project on disk. |
+| `set_repository_permission` |  | Grant, change or remove one user's access to a repository. |
+| `terminate_checkout` |  | End someone's checkout of a file on the server (admin cleanup). |
 | `wait_for_analysis` | yes | Block until a database has finished opening (and auto-analysis, if asked). |
 
 ## matching
@@ -194,8 +207,11 @@ signature and documentation.
 |---|---|---|
 | `create_label` |  | Add a label at an address, alongside any it already has. |
 | `delete_label` |  | Remove one label from an address (function names are refused). |
+| `list_equates` |  | List the program's equates (named constants). |
 | `list_names` |  | List all named locations, paginated with optional regex filter. |
+| `remove_equate` |  | Show an operand's number again instead of its equate name. |
 | `rename_symbol` |  | Rename the primary symbol at an address, or create a label if it has none. |
+| `set_equate` |  | Show a named constant in place of a number in one instruction operand. |
 
 ## navigation
 
@@ -218,7 +234,7 @@ signature and documentation.
 |---|---|---|
 | `find_code_by_string` | yes | Find every reference to defined strings whose value matches a regex. |
 | `list_strings` | yes | List defined string data items, optionally filtered by a case-insensitive regex. |
-| `search_bytes` |  | Find occurrences of an exact byte sequence in program memory. |
+| `search_bytes` |  | Find a byte pattern in program memory, with optional wildcards. |
 | `search_text` |  | Search the disassembly text of every instruction for a regex. |
 
 ## signatures
@@ -295,6 +311,7 @@ signature and documentation.
 |---|---|---|
 | `add_code_xref` |  | Add a user-defined call, jump or fall-through reference between two addresses. |
 | `add_data_xref` |  | Add a user-defined data reference (read, write, pointer) between two addresses. |
+| `analyze_call_graph` |  | Analyse the whole program's call graph. |
 | `delete_code_xref` |  | Remove the control-flow (call/jump) reference from one address to another. |
 | `delete_data_xref` |  | Remove the data (read/write/pointer) reference from one address to another. |
 | `get_call_graph` |  | Build the caller/callee tree around the function containing an address. |

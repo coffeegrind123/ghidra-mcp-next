@@ -2,7 +2,8 @@
   "roles": {
     "open_database": "none",
     "parse_c_source": "none",
-    "search_tools": "search"
+    "search_tools": "search",
+    "terminate_checkout": "none"
   },
   "exceptions": [
     {

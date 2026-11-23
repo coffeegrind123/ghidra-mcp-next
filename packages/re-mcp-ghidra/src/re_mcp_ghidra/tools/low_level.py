@@ -292,8 +292,8 @@ def register(mcp: FastMCP) -> None:
         if namespace:
             from ghidra.app.util import NamespaceUtils  # noqa: PLC0415
 
-            found = NamespaceUtils.getNamespaces(namespace, None, program)
-            if not found or found.isEmpty():
+            found = NamespaceUtils.getNamespaceByPath(program, None, namespace)  # a java List
+            if found is None or found.isEmpty():
                 raise GhidraError(f"No namespace {namespace!r}.", error_type="NotFound")
             ns = found.get(0)
         sym = table.getSymbol(name, addr, ns) or table.createLabel(

@@ -182,6 +182,8 @@ async def _scenario(binary: Path) -> dict[str, Any]:
             name: await rec.tool("get_data_type", name=name)
             for name in ("hdr_a_t", "hdr_b_t", "hdr_id_t")
         }
+        out["analysis"] = await _analysis_cases(rec, first, second)
+        out["markup"] = await _markup_cases(rec, db, second)
         out["types"] = await _type_cases(rec, db, exclude={first["start"], second["start"]})
         out["low"] = await _low_level_cases(rec, db, exclude={first["start"], second["start"]})
         out["regvalue"] = await _register_value_cases(
@@ -257,6 +259,78 @@ async def _register_value_cases(rec: Recorder, db: str, exclude: set[str]) -> di
             "find_register_value", address=hex(base + query_offset), register_name=register
         )
     return results
+
+
+async def _analysis_cases(rec: Recorder, first: dict, second: dict) -> dict[str, Any]:
+    out: dict[str, Any] = {}
+    out["metrics"] = await rec.tool("get_function_metrics", sort_by="cyclomatic", limit=20)
+    out["metrics_one"] = await rec.tool("get_function_metrics", address=first["start"])
+    out["summary"] = await rec.tool("analyze_call_graph", mode="summary")
+    out["roots"] = await rec.tool("analyze_call_graph", mode="roots", limit=50)
+    out["scc"] = await rec.tool("analyze_call_graph", mode="scc")
+    out["edges"] = await rec.tool("analyze_call_graph", mode="edges", limit=5)
+    caller, callee = out["edges"]["edge_list"][0]
+    out["edge_pair"] = (caller, callee)
+    out["path"] = await rec.tool(
+        "analyze_call_graph", mode="path", from_address=caller, to_address=callee
+    )
+    out["gaps"] = await rec.tool("find_code_gaps", min_size=1)
+    big = out["metrics"]["items"][0]["address"]
+    out["big"] = big
+    out["pcode_low"] = await rec.tool("get_function_pcode", address=big, level="low", limit=10)
+    out["pcode_high"] = await rec.tool("get_function_pcode", address=big, level="high", limit=10)
+    out["dataflow"] = await rec.tool(
+        "analyze_dataflow",
+        address=out["pcode_high"]["items"][-1]["address"],
+        direction="backward",
+    )
+    out["diff_same"] = await rec.tool("diff_functions", address_a=big, address_b=big)
+    out["diff_other"] = await rec.tool("diff_functions", address_a=big, address_b=second["start"])
+    return out
+
+
+async def _markup_cases(rec: Recorder, db: str, second: dict) -> dict[str, Any]:
+    out: dict[str, Any] = {}
+    found = await rec(
+        "execute",
+        database=db,
+        read_only=True,
+        code=(
+            "for i in program.getListing().getInstructions(True):\n"
+            "    for op in range(i.getNumOperands()):\n"
+            "        s = i.getScalar(op)\n"
+            "        if s is not None and 2 < s.getValue() < 0x10000 and not i.getOperandReferences(op):\n"
+            "            return {'address': '0x' + str(i.getAddress()).lstrip('0'), 'op': op,"
+            " 'value': int(s.getValue())}"
+        ),
+    )
+    site = found["result"]
+    out["site"] = site
+    out["equate"] = await rec.tool(
+        "set_equate", address=site["address"], operand=site["op"], name="MY_CONST"
+    )
+    out["equates"] = await rec.tool("list_equates", filter_pattern="MY_CONST")
+    out["unequate"] = await rec.tool("remove_equate", address=site["address"], operand=site["op"])
+    out["equates_after"] = await rec.tool("list_equates", filter_pattern="MY_CONST")
+
+    target = second["start"]
+    await rec.tool("tag_function", address=target, add=["CRYPTO", "TODO"])
+    out["tags"] = await rec.tool("tag_function", address=target, remove=["TODO"])
+    out["tag_list"] = await rec.tool("list_function_tags")
+    out["method"] = await rec.tool("set_function_class", address=target, class_name="net::Conn")
+    out["members"] = await rec.tool("list_class_members", class_name="net::Conn")
+    out["ns_label"] = await rec.tool(
+        "create_label", address=target, name="in_class", namespace="net::Conn"
+    )
+
+    raw = await rec.tool("read_bytes", address=target, size=4)
+    hexed = raw["hex_data"].replace(" ", "")
+    out["pattern_target"] = target
+    out["wild"] = await rec.tool("search_bytes", pattern=hexed[:6] + "??", start_address=target)
+    out["nibble"] = await rec.tool(
+        "search_bytes", pattern=hexed[:6] + hexed[6] + "?", start_address=target
+    )
+    return out
 
 
 async def _type_cases(rec: Recorder, db: str, exclude: set[str]) -> dict[str, Any]:
@@ -514,6 +588,42 @@ def test_find_register_value(run, case):
         assert got["found"] is True, got
         assert got["value"].lower() == expected
         assert got["source_address"], got
+
+
+def test_analysis_tools(run):
+    a = run["analysis"]
+    for key, value in a.items():
+        if isinstance(value, dict):
+            assert value.get("is_error") is not True, (key, value)
+    scores = [m["cyclomatic"] for m in a["metrics"]["items"]]
+    assert scores == sorted(scores, reverse=True)
+    assert a["metrics"]["total"] > 50
+    assert a["metrics_one"]["items"][0]["instructions"] > 0
+    assert a["summary"]["functions"] > 50 and a["summary"]["edges"] > 0
+    assert a["roots"]["nodes"]
+    caller, callee = a["edge_pair"]
+    assert [n["address"].lower() for n in a["path"]["nodes"]] == [caller.lower(), callee.lower()]
+    assert a["pcode_low"]["total"] > 0 and a["pcode_high"]["total"] > 0
+    assert a["dataflow"]["steps"] or a["dataflow"]["stops"]
+    assert a["diff_same"]["similarity"] == 1.0
+    assert a["diff_other"]["similarity"] < 1.0
+
+
+def test_equates_tags_classes_and_wildcards(run):
+    m = run["markup"]
+    for key, value in m.items():
+        if isinstance(value, dict):
+            assert value.get("is_error") is not True, (key, value)
+    assert m["equate"]["value"] == m["site"]["value"]
+    assert [e["name"] for e in m["equates"]["items"]] == ["MY_CONST"]
+    assert m["equates_after"]["items"] == []
+    assert m["tags"]["tags"] == ["CRYPTO"]
+    assert {"name": "CRYPTO", "comment": "", "functions": 1} in m["tag_list"]["items"]
+    assert m["pattern_target"].lower() in [x["address"].lower() for x in m["members"]["members"]]
+    assert m["ns_label"]["namespace"] == "net::Conn"
+    target = int(m["pattern_target"], 16)
+    assert int(m["wild"]["result"][0]["address"], 16) == target
+    assert int(m["nibble"]["result"][0]["address"], 16) == target
 
 
 def test_type_categories_rename_clone_merge(run):
