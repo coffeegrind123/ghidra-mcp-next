@@ -6,7 +6,7 @@
 
 from __future__ import annotations
 
-from typing import Annotated
+from typing import Annotated, Literal
 
 from fastmcp import FastMCP
 from pydantic import BaseModel, Field
@@ -46,6 +46,18 @@ class CallGraphEntry(BaseModel):
     address: str
     callers: list[dict] = Field(default_factory=list)
     callees: list[dict] = Field(default_factory=list)
+    node_count: int = Field(default=0, description="Functions in the tree (root only).")
+    truncated: bool = Field(default=False, description="max_nodes stopped the expansion.")
+
+
+def _key(func) -> str:
+    """Identity of a function across address spaces (EXTERNAL vs RAM)."""
+    return str(func.getEntryPoint())
+
+
+def _order(func) -> tuple[bool, int]:
+    entry = func.getEntryPoint()
+    return (entry.isExternalAddress(), entry.getOffset())
 
 
 def register(mcp: FastMCP) -> None:
@@ -132,84 +144,141 @@ def register(mcp: FastMCP) -> None:
         address: Address,
         depth: Annotated[
             int,
-            Field(
-                description="Levels of callers and callees to expand; values outside "
-                "1-3 are clamped. Example: 2"
-            ),
+            Field(ge=1, le=10, description="Levels to expand in each direction (1-10). Example: 2"),
         ] = 1,
+        direction: Annotated[
+            Literal["both", "callers", "callees"],
+            Field(description='Which way to expand. Example: "callers"'),
+        ] = "both",
+        max_nodes: Annotated[
+            int,
+            Field(ge=1, le=5000, description="Most functions per direction. Example: 250"),
+        ] = 250,
     ) -> CallGraphEntry:
         """Build the caller/callee tree around the function containing an address.
 
         Function-level view; use get_xrefs_to / get_xrefs_from for individual
-        references. Returns name, address, callers and callees; at depth > 1 each
-        caller/callee is itself a nested node, at the last level just name and address.
-        Functions already visited are skipped.
+        references, analyze_call_graph for whole-program questions. Calls through
+        thunks (import stubs) count as calls to the real function. A function
+        met again in the same direction appears once more with cyclic true and is
+        not expanded; truncated marks where max_nodes stopped expansion. Returns
+        {name, address, callers, callees, node_count, truncated}; nodes nest
+        callers/callees to depth.
         """
-        if depth < 1:
-            depth = 1
-        if depth > 3:
-            depth = 3
+        from ghidra.util.task import TaskMonitor  # noqa: PLC0415
 
-        func = session.program.getFunctionManager().getFunctionContaining(resolve_address(address))
-        if func is None:
-            from re_mcp_ghidra.exceptions import GhidraError  # noqa: PLC0415
+        from re_mcp_ghidra.helpers import resolve_function  # noqa: PLC0415
+        from re_mcp_ghidra.tools.program_analysis import _resolve_thunk  # noqa: PLC0415
 
-            raise GhidraError(f"No function at {address}", error_type="NotFound")
+        root = _resolve_thunk(resolve_function(address))
+        thunks_of: dict[str, list] = {}
+        for f in session.program.getFunctionManager().getFunctions(True):
+            if f.isThunk():
+                target = f.getThunkedFunction(True)
+                if target is not None:
+                    thunks_of.setdefault(_key(target), []).append(f)
 
-        return _build_call_graph(func, depth, set())
+        def callers_of(func):
+            seen = {}
+            for f in [func, *thunks_of.get(_key(func), [])]:
+                for raw in f.getCallingFunctions(TaskMonitor.DUMMY):
+                    c = _resolve_thunk(raw)
+                    seen.setdefault(_key(c), c)
+            return sorted(seen.values(), key=_order)
 
-    def _build_call_graph(func, depth: int, visited: set) -> CallGraphEntry:
-        addr = func.getEntryPoint()
-        key = addr.getOffset()
-        if key in visited or depth <= 0:
-            return CallGraphEntry(
-                name=func.getName(),
-                address=format_address(key),
-            )
-        visited.add(key)
+        def callees_of(func):
+            seen = {}
+            for raw in func.getCalledFunctions(TaskMonitor.DUMMY):
+                c = _resolve_thunk(raw)
+                seen.setdefault(_key(c), c)
+            return sorted(seen.values(), key=_order)
 
-        program = session.program
-        ref_mgr = program.getReferenceManager()
-        func_mgr = program.getFunctionManager()
+        def expand(func, level: int, step, visited: set, state: dict) -> list[dict]:
+            out = []
+            for nxt in step(func):
+                key = _key(nxt)
+                node = {"name": str(nxt.getName()), "address": format_location(nxt.getEntryPoint())}
+                if key in visited:
+                    node["cyclic"] = True
+                    out.append(node)
+                    continue
+                if state["nodes"] >= max_nodes:
+                    state["truncated"] = True
+                    break
+                state["nodes"] += 1
+                visited.add(key)
+                if level < depth:
+                    child = expand(nxt, level + 1, step, visited, state)
+                    node["callers" if step is callers_of else "callees"] = child
+                out.append(node)
+            return out
 
-        # Callers
-        callers = []
-        for ref in ref_mgr.getReferencesTo(addr):
-            if ref.getReferenceType().isCall():
-                caller_func = func_mgr.getFunctionContaining(ref.getFromAddress())
-                if caller_func and caller_func.getEntryPoint().getOffset() not in visited:
-                    if depth > 1:
-                        callers.append(
-                            _build_call_graph(caller_func, depth - 1, visited).model_dump()
-                        )
-                    else:
-                        callers.append(
-                            {
-                                "name": caller_func.getName(),
-                                "address": format_address(caller_func.getEntryPoint().getOffset()),
-                            }
-                        )
-
-        # Callees
-        callees = []
-        called = func.getCalledFunctions(None)
-        if called:
-            for callee in called:
-                callee_key = callee.getEntryPoint().getOffset()
-                if callee_key not in visited:
-                    if depth > 1:
-                        callees.append(_build_call_graph(callee, depth - 1, visited).model_dump())
-                    else:
-                        callees.append(
-                            {
-                                "name": callee.getName(),
-                                "address": format_address(callee_key),
-                            }
-                        )
-
+        up = {"nodes": 0, "truncated": False}
+        down = {"nodes": 0, "truncated": False}
+        callers = expand(root, 1, callers_of, {_key(root)}, up) if direction != "callees" else []
+        callees = expand(root, 1, callees_of, {_key(root)}, down) if direction != "callers" else []
         return CallGraphEntry(
-            name=func.getName(),
-            address=format_address(key),
+            name=str(root.getName()),
+            address=format_location(root.getEntryPoint()),
             callers=callers,
             callees=callees,
+            node_count=1 + up["nodes"] + down["nodes"],
+            truncated=up["truncated"] or down["truncated"],
         )
+
+    @mcp.tool(annotations=ANNO_READ_ONLY, tags={"xrefs"})
+    @session.require_open
+    def find_common_callers(
+        addresses: Annotated[
+            list[str],
+            Field(
+                min_length=2,
+                description='Functions (addresses or names). Example: ["send_packet", "log_error"]',
+            ),
+        ],
+        depth: Annotated[
+            int,
+            Field(
+                ge=1,
+                le=10,
+                description="1: direct callers; more: callers at most this many calls up. Example: 2",
+            ),
+        ] = 1,
+    ) -> dict:
+        """Find functions that call all of the given functions (directly or within depth).
+
+        Use to find the dispatcher or routine tying several functions together.
+        Calls through thunks count. Returns {items: [{address, name}], total}.
+        """
+        from ghidra.util.task import TaskMonitor  # noqa: PLC0415
+
+        from re_mcp_ghidra.helpers import resolve_function  # noqa: PLC0415
+        from re_mcp_ghidra.tools.program_analysis import _resolve_thunk  # noqa: PLC0415
+
+        # Reverse edges keyed by full address string, so calls to external
+        # functions (through their import thunks) count and EXTERNAL offsets
+        # never collide with RAM offsets in base-0 objects.
+        funcs: dict[str, object] = {}
+        reverse: dict[str, set[str]] = {}
+        for func in session.program.getFunctionManager().getFunctions(True):
+            if func.isThunk():
+                continue
+            key = _key(func)
+            funcs[key] = func
+            for called in func.getCalledFunctions(TaskMonitor.DUMMY):
+                reverse.setdefault(_key(_resolve_thunk(called)), set()).add(key)
+
+        def up(key: str) -> set[str]:
+            found, frontier = set(), {key}
+            for _ in range(depth):
+                frontier = {c for k in frontier for c in reverse.get(k, ())} - found
+                found |= frontier
+            return found
+
+        sets = [up(_key(_resolve_thunk(resolve_function(a)))) for a in addresses]
+        common = sorted((funcs[k] for k in set.intersection(*sets)), key=_order)
+        items = [
+            {"address": format_location(f.getEntryPoint()), "name": str(f.getName())}
+            for f in common
+        ]
+        return {"items": items, "total": len(items)}

@@ -54,7 +54,7 @@ signature and documentation.
 | `get_function_comment` |  | Read the header comments of the function containing an address. |
 | `search_comments` |  | Search every comment in the program (all five kinds) for a regex. |
 | `set_comment` |  | Write or clear one listing comment slot at an address, replacing its text. |
-| `set_decompiler_comment` |  | Write the PRE comment at an address; it shows above that line in pseudocode. |
+| `set_decompiler_comment` |  | Write the PRE comment shown above a line of pseudocode. |
 | `set_function_comment` |  | Write or clear the header comment of the function containing an address. |
 
 ## data
@@ -329,6 +329,7 @@ signature and documentation.
 | `analyze_call_graph` |  | Analyse the whole program's call graph. |
 | `delete_code_xref` |  | Remove the control-flow (call/jump) reference from one address to another. |
 | `delete_data_xref` |  | Remove the data (read/write/pointer) reference from one address to another. |
+| `find_common_callers` |  | Find functions that call all of the given functions (directly or within depth). |
 | `get_call_graph` |  | Build the caller/callee tree around the function containing an address. |
 | `get_xrefs_from` | yes | List outgoing references: what the instruction or data at an address refers to. |
 | `get_xrefs_to` | yes | List incoming references: every place that calls, jumps to or accesses an address. |

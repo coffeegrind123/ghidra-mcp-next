@@ -295,6 +295,18 @@ async def _analysis_cases(rec: Recorder, first: dict, second: dict) -> dict[str,
     out["edges"] = await rec.tool("analyze_call_graph", mode="edges", limit=5)
     caller, callee = out["edges"]["edge_list"][0]
     out["edge_pair"] = (caller, callee)
+    out["graph_callers"] = await rec.tool(
+        "get_call_graph", address=callee, direction="callers", depth=3
+    )
+    out["graph_capped"] = await rec.tool(
+        "get_call_graph", address=caller, direction="callees", depth=5, max_nodes=1
+    )
+    out["common"] = await rec.tool("find_common_callers", addresses=[callee, callee])
+    entry_graph = await rec.tool("get_call_graph", address="entry", direction="callees")
+    imports = [n["address"] for n in entry_graph["callees"] if n["address"].startswith("EXTERNAL")]
+    out["entry_imports"] = imports
+    if imports:
+        out["common_import"] = await rec.tool("find_common_callers", addresses=imports[:1] * 2)
     out["path"] = await rec.tool(
         "analyze_call_graph", mode="path", from_address=caller, to_address=callee
     )
@@ -716,6 +728,15 @@ def test_analysis_tools(run):
     assert a["roots"]["nodes"]
     caller, callee = a["edge_pair"]
     assert [n["address"].lower() for n in a["path"]["nodes"]] == [caller.lower(), callee.lower()]
+    assert caller.lower() in [n["address"].lower() for n in a["graph_callers"]["callers"]]
+    assert a["graph_callers"]["callees"] == []
+    capped = a["graph_capped"]
+    assert capped["node_count"] == 2  # root + one callee (caller has at least callee)
+    assert capped["truncated"] or len(capped["callees"]) == 1
+    assert caller.lower() in [n["address"].lower() for n in a["common"]["items"]]
+    # glibc's entry calls __libc_start_main through its import thunk: externals count.
+    assert a["entry_imports"]
+    assert a["common_import"]["total"] >= 1
     assert a["pcode_low"]["total"] > 0 and a["pcode_high"]["total"] > 0
     assert a["dataflow"]["steps"] or a["dataflow"]["stops"]
     assert a["diff_same"]["similarity"] == 1.0
