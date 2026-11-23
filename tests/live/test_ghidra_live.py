@@ -207,6 +207,7 @@ async def _scenario(binary: Path) -> dict[str, Any]:
         out["import_refs_by_name"] = await rec.tool("get_xrefs_to", address=out["import"]["name"])
         out["analysis"] = await _analysis_cases(rec, first, second)
         out["extras"] = await _extras_cases(rec, first, second)
+        out["lists"] = await _list_cases(rec, second)
         out["markup"] = await _markup_cases(rec, db, second)
         out["types"] = await _type_cases(rec, db, exclude={first["start"], second["start"]})
         out["low"] = await _low_level_cases(rec, db, exclude={first["start"], second["start"]})
@@ -332,6 +333,31 @@ async def _analysis_cases(rec: Recorder, first: dict, second: dict) -> dict[str,
     out["cdiff_other"] = await rec.tool(
         "diff_functions", address_a=big, address_b=second["start"], level="decompiled"
     )
+    return out
+
+
+FIND_THUNK = """
+for f in program.getFunctionManager().getFunctions(True):
+    if f.isThunk() and f.getThunkedFunction(True) is not None:
+        return hex(f.getEntryPoint().getOffset())
+"""
+
+
+async def _list_cases(rec: Recorder, second: dict) -> dict[str, Any]:
+    out: dict[str, Any] = {}
+    out["names_default"] = await rec.tool("list_names", source="default", limit=50)
+    out["names_named"] = await rec.tool("list_names", exclude_default_names=True, limit=500)
+    out["names_local"] = await rec.tool("list_names", include_external=False, limit=500)
+    out["names_ext"] = await rec.tool("list_names", filter_pattern="^__libc_start_main$")
+    out["names_funcs"] = await rec.tool("list_names", symbol_type="function", limit=50)
+    out["funcs_named"] = await rec.tool("list_functions", exclude_default_names=True, limit=500)
+    await rec.tool("tag_function", address=second["start"], add=["listcase"])
+    out["funcs_tagged"] = await rec.tool("list_functions", tag="listcase")
+    out["funcs_untagged"] = await rec.tool("list_functions", untagged=True, limit=5000)
+    await rec.tool("tag_function", address=second["start"], remove=["listcase"])
+    thunk = await rec("execute", database=rec.database, read_only=True, code=FIND_THUNK)
+    out["thunk"] = await rec.tool("get_function", address=thunk["result"])
+    out["not_thunk"] = await rec.tool("get_function", address=second["start"])
     return out
 
 
@@ -766,6 +792,29 @@ def test_analysis_tools(run):
     assert same["level"] == "decompiled" and same["similarity"] == 1.0 and same["hunks"] == []
     assert other["similarity"] < 1.0
     assert any(h["kind"] == "code" for h in other["hunks"])
+
+
+def test_list_filters(run):
+    x = run["lists"]
+    for key, value in x.items():
+        assert value.get("is_error") is not True, (key, value)
+    assert x["names_default"]["items"]
+    assert {i["source"] for i in x["names_default"]["items"]} == {"default"}
+    assert "default" not in {i["source"] for i in x["names_named"]["items"]}
+    assert not any(i["address"].startswith("EXTERNAL") for i in x["names_local"]["items"])
+    # The import, plus any local symbol of the same name (an ELF GOT label).
+    assert "EXTERNAL" in [i["address"][:8] for i in x["names_ext"]["items"]]
+    assert {i["type"] for i in x["names_funcs"]["items"]} == {"Function"}
+    assert not any(i["name"].startswith("FUN_") for i in x["funcs_named"]["items"])
+    second = run["second"]["start"]
+    assert [i["start"] for i in x["funcs_tagged"]["items"]] == [second]
+    assert second not in {i["start"] for i in x["funcs_untagged"]["items"]}
+
+
+def test_thunk_target(run):
+    x = run["lists"]
+    assert x["thunk"]["thunk_target"] and x["thunk"]["thunk_target_address"]
+    assert x["not_thunk"]["thunk_target"] is None
 
 
 def test_signature_pages_neither_repeat_nor_skip(run):

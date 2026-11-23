@@ -21,6 +21,7 @@ from re_mcp_ghidra.helpers import (
     Offset,
     compile_filter,
     format_address,
+    format_location,
     paginate_iter,
     resolve_function,
 )
@@ -39,6 +40,13 @@ class FunctionDetail(BaseModel):
     is_external: bool = False
     comment: str = ""
     entry_point: str = ""
+    thunk_target: str | None = Field(
+        default=None,
+        description="For a thunk: the function it finally reaches (name), following chains.",
+    )
+    thunk_target_address: str | None = Field(
+        default=None, description="That function's address (EXTERNAL:... for an import)."
+    )
 
 
 class DecompiledLine(BaseModel):
@@ -108,8 +116,31 @@ def register(mcp: FastMCP) -> None:
         offset: Offset = 0,
         limit: Limit = 100,
         filter_pattern: FilterPattern = "",
+        tag: Annotated[
+            str, Field(description='Only functions with this tag. Example: "crypto"')
+        ] = "",
+        untagged: Annotated[
+            bool, Field(description="Only functions with no tag. Example: true")
+        ] = False,
+        exclude_default_names: Annotated[
+            bool,
+            Field(
+                description=(
+                    "Leave out functions still named by Ghidra (FUN_..., thunk_FUN_...): "
+                    "what is left is what someone named. Example: true"
+                )
+            ),
+        ] = False,
     ) -> dict:
-        """List all functions in the database, paginated with optional regex filter."""
+        """List the functions in the database, paginated.
+
+        Filter by a regex on the name, a tag (set_function_tag), untagged, or
+        exclude_default_names to see only named functions (or keep them and
+        page through the unnamed ones to triage). Returns {items: [{name, start,
+        end, size}], total, offset, limit, has_more}.
+        """
+        from ghidra.program.model.symbol import SourceType  # noqa: PLC0415
+
         program = session.program
         func_mgr = program.getFunctionManager()
         filt = compile_filter(filter_pattern)
@@ -121,6 +152,12 @@ def register(mcp: FastMCP) -> None:
                 name = func.getName()
                 if filt and not filt.search(name):
                     continue
+                if exclude_default_names and func.getSymbol().getSource() == SourceType.DEFAULT:
+                    continue
+                if tag or untagged:
+                    tags = {str(t.getName()) for t in func.getTags()}
+                    if (tag and tag not in tags) or (untagged and tags):
+                        continue
                 body = func.getBody()
                 start = func.getEntryPoint().getOffset()
                 end = body.getMaxAddress().getOffset() + 1 if body.getNumAddresses() > 0 else start
@@ -141,9 +178,11 @@ def register(mcp: FastMCP) -> None:
         Use list_functions to enumerate functions, decompile_function or
         disassemble_function for its body. Returns name, start, end (exclusive), size
         (bytes in body), calling_convention, signature, is_thunk, is_external, comment
-        and entry_point.
+        and entry_point; for a thunk, thunk_target and thunk_target_address
+        (the function the chain of thunks ends at, often an import).
         """
         func = resolve_function(address)
+        target = func.getThunkedFunction(True) if func.isThunk() else None
         body = func.getBody()
         entry = func.getEntryPoint()
         start = entry.getOffset()
@@ -160,6 +199,10 @@ def register(mcp: FastMCP) -> None:
             is_external=func.isExternal(),
             comment=func.getComment() or "",
             entry_point=format_address(start),
+            thunk_target=str(target.getName(True)) if target is not None else None,
+            thunk_target_address=(
+                format_location(target.getEntryPoint()) if target is not None else None
+            ),
         )
 
     @mcp.tool(annotations=ANNO_READ_ONLY, tags={"functions", "decompiler"})

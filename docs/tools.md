@@ -131,7 +131,7 @@ signature and documentation.
 | `list_class_members` |  | List the methods of a C++ class. |
 | `list_function_ranges` |  | List all address ranges (ranges) in a function body. |
 | `list_function_tags` |  | List function tags with how many functions carry each. |
-| `list_functions` | yes | List all functions in the database, paginated with optional regex filter. |
+| `list_functions` | yes | List the functions in the database, paginated. |
 | `remove_function_range` |  | Detach the body range that contains range_address from its function. |
 | `rename_function` |  | Rename the function containing an address. |
 | `set_flow_override` |  | Set or clear an instruction's flow override. |
@@ -225,7 +225,7 @@ signature and documentation.
 | `create_label` |  | Add a label at an address, alongside any it already has. |
 | `delete_label` |  | Remove one label from an address (function names are refused). |
 | `list_equates` |  | List the program's equates (named constants). |
-| `list_names` |  | List all named locations, paginated with optional regex filter. |
+| `list_names` |  | List named locations: functions, labels, classes, imports and more. |
 | `remove_equate` |  | Show an operand's number again instead of its equate name. |
 | `rename_symbol` |  | Rename the primary symbol at an address, or create a label if it has none. |
 | `set_equate` |  | Show a named constant in place of a number in one instruction operand. |
