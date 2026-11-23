@@ -14,6 +14,7 @@ from re_mcp_ghidra.helpers import (
     Limit,
     Offset,
     format_address,
+    format_location,
     paginate_iter,
 )
 from re_mcp_ghidra.session import session
@@ -75,7 +76,7 @@ def register(mcp: FastMCP) -> None:
                     addr = ext_loc.getExternalSpaceAddress()
                     yield ImportItem(
                         module=lib_name,
-                        address=format_address(addr.getOffset()) if addr else "0x0",
+                        address=format_location(addr) if addr else "0x0",
                         name=sym.getName(),
                     ).model_dump()
 

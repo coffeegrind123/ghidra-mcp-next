@@ -51,6 +51,7 @@ __all__ = [
     "call_ghidra",
     "compile_filter",
     "format_address",
+    "format_location",
     "format_permissions",
     "paginate",
     "paginate_iter",
@@ -125,10 +126,52 @@ def to_ghidra_address(offset: int):
 def resolve_address(addr: str | int):
     """Parse and validate an address, returning a Ghidra Address object.
 
+    Accepts a number (default address space), a space-qualified address as
+    :func:`format_location` writes it ("EXTERNAL:00000001", "ram:00401000"), or
+    a symbol name, which resolves to the symbol's real address in whatever space
+    it lives (imports are in the EXTERNAL space, not the default one).
+
     Raises :class:`GhidraError` with ``error_type="InvalidAddress"`` on failure.
     """
+    from re_mcp_ghidra.session import session  # noqa: PLC0415
+
+    if isinstance(addr, str):
+        text = addr.strip()
+        if ":" in text and not text.lower().startswith("0x") and session.program is not None:
+            space_addr = session.program.getAddressFactory().getAddress(text)
+            if space_addr is not None:
+                return space_addr
+        if text and session.program is not None:
+            try:
+                parse_address(text)
+            except ValueError:
+                symbol = _lookup_symbol(text)
+                if symbol is not None:
+                    return symbol.getAddress()
     offset = resolve_address_value(addr)
     return to_ghidra_address(offset)
+
+
+def _lookup_symbol(name: str):
+    from re_mcp_ghidra.session import session  # noqa: PLC0415
+
+    table = session.program.getSymbolTable()
+    symbols = table.getGlobalSymbols(name)
+    if symbols:
+        return symbols[0]
+    it = table.getSymbols(name)
+    return it.next() if it.hasNext() else None
+
+
+def format_location(addr) -> str:
+    """An address as text resolve_address reads back: hex for the default
+    space, Ghidra's "SPACE:offset" form for any other space (EXTERNAL, overlays)."""
+    from re_mcp_ghidra.session import session  # noqa: PLC0415
+
+    default = session.program.getAddressFactory().getDefaultAddressSpace()
+    if addr.getAddressSpace().equals(default):
+        return format_address(addr.getOffset())
+    return str(addr)
 
 
 def resolve_function(addr: str | int):

@@ -17,6 +17,7 @@ from re_mcp_ghidra.helpers import (
     Limit,
     Offset,
     format_address,
+    format_location,
     paginate_iter,
     resolve_address,
 )
@@ -28,6 +29,9 @@ class XrefTo(BaseModel):
     from_function: str = Field(description="Containing function name, if any.")
     ref_type: str = Field(description="Reference type.")
     is_call: bool = Field(description="True if this is a call reference.")
+    via_thunk: str = Field(
+        default="", description="The thunk this reference reaches the target through, if any."
+    )
 
 
 class XrefFrom(BaseModel):
@@ -55,26 +59,37 @@ def register(mcp: FastMCP) -> None:
         """List incoming references: every place that calls, jumps to or accesses an address.
 
         Answers "who uses this?"; use get_xrefs_from for what the code at an address
-        refers to. Returns a page dict (items, total, offset, limit, has_more); each item
-        has from_address, from_function, ref_type and is_call.
+        refers to. For a function reached through thunks (an import called via its
+        PLT/IAT stub), references to every thunk are included, with via_thunk set to
+        the thunk's address. Returns a page dict (items, total, offset, limit,
+        has_more); each item has from_address, from_function, ref_type, is_call and
+        via_thunk.
         """
         program = session.program
         ref_mgr = program.getReferenceManager()
         func_mgr = program.getFunctionManager()
         target = resolve_address(address)
 
+        # Imports are reached through thunks; Ghidra stores the calls on the thunk.
+        targets = [(target, "")]
+        func_at = func_mgr.getFunctionAt(target)
+        if func_at is not None:
+            thunks = func_at.getFunctionThunkAddresses(True) or []
+            targets += [(t, format_location(t)) for t in thunks]
+
         def _gen():
-            refs = ref_mgr.getReferencesTo(target)
-            for ref in refs:
-                from_addr = ref.getFromAddress()
-                func = func_mgr.getFunctionContaining(from_addr)
-                ref_type = ref.getReferenceType()
-                yield XrefTo(
-                    from_address=format_address(from_addr.getOffset()),
-                    from_function=func.getName() if func else "",
-                    ref_type=str(ref_type),
-                    is_call=ref_type.isCall(),
-                ).model_dump()
+            for where, via in targets:
+                for ref in ref_mgr.getReferencesTo(where):
+                    from_addr = ref.getFromAddress()
+                    func = func_mgr.getFunctionContaining(from_addr)
+                    ref_type = ref.getReferenceType()
+                    yield XrefTo(
+                        from_address=format_location(from_addr),
+                        from_function=func.getName() if func else "",
+                        ref_type=str(ref_type),
+                        is_call=ref_type.isCall(),
+                        via_thunk=via,
+                    ).model_dump()
 
         return paginate_iter(_gen(), offset, limit)
 

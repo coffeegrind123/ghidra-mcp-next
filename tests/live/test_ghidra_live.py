@@ -182,6 +182,12 @@ async def _scenario(binary: Path) -> dict[str, Any]:
             name: await rec.tool("get_data_type", name=name)
             for name in ("hdr_a_t", "hdr_b_t", "hdr_id_t")
         }
+        imports = await rec.tool("list_imports", limit=50)
+        out["import"] = imports["items"][0]
+        out["import_refs_by_address"] = await rec.tool(
+            "get_xrefs_to", address=out["import"]["address"]
+        )
+        out["import_refs_by_name"] = await rec.tool("get_xrefs_to", address=out["import"]["name"])
         out["analysis"] = await _analysis_cases(rec, first, second)
         out["markup"] = await _markup_cases(rec, db, second)
         out["types"] = await _type_cases(rec, db, exclude={first["start"], second["start"]})
@@ -588,6 +594,15 @@ def test_find_register_value(run, case):
         assert got["found"] is True, got
         assert got["value"].lower() == expected
         assert got["source_address"], got
+
+
+def test_import_addresses_keep_their_space(run):
+    # list_imports hands out addresses get_xrefs_to must accept; imports live in
+    # Ghidra's EXTERNAL space, not the default one.
+    for key in ("import_refs_by_address", "import_refs_by_name"):
+        refs = run[key]
+        assert refs["is_error"] is False, (key, refs)
+        assert refs["total"] >= 1, (key, run["import"], refs)
 
 
 def test_analysis_tools(run):
