@@ -14,7 +14,7 @@ re-exported here for convenient single-source imports.
 from __future__ import annotations
 
 from re_mcp.models import (  # noqa: F401  — re-export
-    FunctionChunk,
+    FunctionRange,
     FunctionSummary,
     PaginatedResult,
     RenameResult,

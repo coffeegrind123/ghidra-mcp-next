@@ -4,8 +4,8 @@
 
 """Decompiler AST (PCode/token tree) exploration tools.
 
-Ghidra's equivalent of IDA's Hex-Rays ctree. Uses the decompiler's
-ClangTokenGroup to build a simplified AST representation.
+Uses the decompiler's ClangTokenGroup to build a simplified AST
+representation.
 """
 
 from __future__ import annotations
@@ -25,28 +25,28 @@ from re_mcp_ghidra.helpers import (
 from re_mcp_ghidra.session import session
 
 
-class GetCtreeResult(BaseModel):
+class DecompilerTokensResult(BaseModel):
     """Decompiler AST for a function."""
 
     function: str = Field(description="Function address (hex).")
     name: str = Field(description="Function name.")
-    ctree: dict | None = Field(description="AST as a nested dict, or null.")
+    tokens: dict | None = Field(description="AST as a nested dict, or null.")
 
 
-class CtreeCallInfo(BaseModel):
+class DecompiledCallInfo(BaseModel):
     """A function call found in the decompiled output."""
 
     callee: str = Field(description="Callee name.")
     call_address: str | None = Field(default=None, description="Call site address (hex).")
 
 
-class FindCtreeCallsResult(BaseModel):
+class FindDecompiledCallsResult(BaseModel):
     """Function calls found in the decompiled output."""
 
     function: str = Field(description="Function address (hex).")
     name: str = Field(description="Function name.")
     call_count: int = Field(description="Number of calls found.")
-    calls: list[CtreeCallInfo] = Field(description="Call list.")
+    calls: list[DecompiledCallInfo] = Field(description="Call list.")
 
 
 def _decompile(func):
@@ -116,7 +116,7 @@ def register(mcp: FastMCP) -> None:
     def get_decompiler_tokens(
         function_address: Address,
         depth: Annotated[int, Field(description="Maximum tree depth (1-10).", ge=1, le=10)] = 3,
-    ) -> GetCtreeResult:
+    ) -> DecompilerTokensResult:
         """Return the decompiler token tree for a function as a structured dict.
 
         Returns a structured representation of the decompiled code's
@@ -134,15 +134,15 @@ def register(mcp: FastMCP) -> None:
         depth = max(1, min(depth, 10))
 
         markup = results.getCCodeMarkup()
-        ctree = None
+        tokens = None
         if markup is not None:
-            ctree = _token_to_dict(markup, depth)
+            tokens = _token_to_dict(markup, depth)
 
         entry = func.getEntryPoint()
-        return GetCtreeResult(
+        return DecompilerTokensResult(
             function=format_address(entry.getOffset()),
             name=func.getName(),
-            ctree=ctree,
+            tokens=tokens,
         )
 
     @mcp.tool(annotations=ANNO_READ_ONLY, tags={"decompiler", "analysis"})
@@ -150,7 +150,7 @@ def register(mcp: FastMCP) -> None:
     def find_decompiled_calls(
         function_address: Address,
         callee_name: str = "",
-    ) -> FindCtreeCallsResult:
+    ) -> FindDecompiledCallsResult:
         """Find function call sites in the decompiled output.
 
         Scans the decompiler's token tree for function call tokens.
@@ -166,7 +166,7 @@ def register(mcp: FastMCP) -> None:
         results = _decompile(func)
 
         markup = results.getCCodeMarkup()
-        calls: list[CtreeCallInfo] = []
+        calls: list[DecompiledCallInfo] = []
 
         def _scan_tokens(token):
             if isinstance(token, ClangFuncNameToken):
@@ -180,7 +180,7 @@ def register(mcp: FastMCP) -> None:
                     except Exception:
                         pass
                     calls.append(
-                        CtreeCallInfo(
+                        DecompiledCallInfo(
                             callee=name,
                             call_address=call_addr,
                         )
@@ -194,7 +194,7 @@ def register(mcp: FastMCP) -> None:
             _scan_tokens(markup)
 
         entry = func.getEntryPoint()
-        return FindCtreeCallsResult(
+        return FindDecompiledCallsResult(
             function=format_address(entry.getOffset()),
             name=func.getName(),
             call_count=len(calls),

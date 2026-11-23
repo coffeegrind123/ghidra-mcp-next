@@ -1,11 +1,12 @@
 # Tool renames and removals from upstream
 
-Upstream ported its IDA tool set to Ghidra and kept IDA's vocabulary. An agent
+Upstream's tool names came from another disassembler's vocabulary. An agent
 working in Ghidra looks for Ghidra's terms (memory block, data type, program
-tree, prototype), so tools carry those names. Upstream is dormant and this
-fork has no users of the old names, so nothing is aliased.
+tree, prototype), so tools, modules, models and result fields carry those
+names. Upstream is dormant and this fork has no users of the old names, so
+nothing is aliased. This server is Ghidra only.
 
-| Old (IDA term) | New | Why |
+| Old (upstream) | New | Why |
 |---|---|---|
 | get_ctree | get_decompiler_tokens | Ghidra has no ctree; it returns the ClangToken tree |
 | find_ctree_calls | find_decompiled_calls | same |
@@ -17,7 +18,7 @@ fork has no users of the old names, so nothing is aliased.
 | set_segment_name | rename_memory_block | same |
 | set_segment_permissions | set_memory_block_permissions | same |
 | get_segments | list_memory_blocks | same; list_* for paginated listings |
-| get_byte_flags | get_code_unit | IDA byte flags; Ghidra: the code unit at an address |
+| get_byte_flags | get_code_unit | Ghidra: the code unit at an address |
 | get_local_type | get_data_type | Ghidra: data type manager, no "local types" |
 | delete_local_type | delete_data_type | same |
 | list_local_types | list_data_types | same |
@@ -37,7 +38,33 @@ Removed:
 
 | Tool | Why |
 |---|---|
-| list_regvars, rename_regvar | Same as list_decompiler_variables / rename_decompiler_variable (IDA register-variable concept) |
+| list_regvars, rename_regvar | Same as list_decompiler_variables / rename_decompiler_variable (a register-variable concept Ghidra does not have) |
 | take_snapshot, list_snapshots | Ghidra has no in-database snapshots; take_snapshot was save_database, list_snapshots returned a placeholder |
 | generate_signatures | Returned "not available in Ghidra" |
 | load_bytes_from_memory | Same as patch_bytes |
+
+Tool modules (file names in `re_mcp_ghidra/tools/`):
+
+| Old | New |
+|---|---|
+| ctree | decompiler_tokens |
+| nalt | address_info |
+| dirtree | program_tree |
+| func_flags | function_flags |
+| makedata | data_definitions |
+| operand_repr | operand_format |
+| srclang | c_source |
+| typeinf | data_type_lookup |
+| entry_manip | entry_points |
+| xref_manip | xref_edits |
+| chunks | function_ranges |
+| segments | memory_blocks |
+| rebase | image_base |
+| regfinder | register_values |
+| signatures | function_id |
+
+Result fields and parameters: `segment_count` → `memory_block_count`; `ctree` →
+`tokens`; `chunks` / `chunk_count` → `ranges` / `range_count`; `tail_address` →
+`range_address`; `tail_start` / `tail_end` → `range_start` / `range_end`. Error types:
+`MakeDataFailed` → `CreateDataFailed`, `UndefineFailed` → `ClearFailed`,
+`RebaseFailed` → `SetImageBaseFailed`.

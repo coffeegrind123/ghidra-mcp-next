@@ -5,7 +5,7 @@
 RE-MCP is a reverse-engineering server for Ghidra that communicates over the Model Context Protocol (MCP). It uses the headless [pyghidra](https://github.com/NationalSecurityAgency/ghidra/tree/master/Ghidra/Features/PyGhidra) API to expose binary analysis capabilities as structured tool calls that LLMs can invoke.
 
 The project is a monorepo with two packages:
-- **`re-mcp-core`** (`packages/re-mcp-core/src/re_mcp/`) — generic MCP supervisor infrastructure (transport, worker management, tool transforms, sandboxed execution)
+- **`re-mcp-core`** (`packages/re-mcp-core/src/re_mcp/`) — generic MCP supervisor infrastructure (transport, worker management, tool transforms, the batch and execute meta tools)
 - **`re-mcp-ghidra`** (`packages/re-mcp-ghidra/src/re_mcp_ghidra/`) — Ghidra-specific backend (pyghidra bootstrap, tools, resources, prompts)
 
 The server supports three transport modes:
@@ -111,12 +111,12 @@ The supervisor uses FastMCP's native Provider system to expose worker tools and 
 
 **`ProxyMCP`** (`re_mcp.supervisor`) subclasses `FastMCP`. It creates a `WorkerPoolProvider` and calls `self.add_provider(worker_pool)`. Generic management tools (`close_database`, `save_database`, `list_databases`, `wait_for_analysis`, `list_targets`) are registered by the supervisor; backend-specific management tools (e.g. Ghidra's `open_database` with `language`/`compiler_spec`) are registered by the backend via `register_management_tools()`. Prompts and the database list resource are also registered directly on the supervisor — they do not require database state and are served by FastMCP's internal local provider.
 
-A `ToolTransform` (a `CatalogTransform` subclass defined in `re_mcp.transforms`) is applied at the server level. It pins a set of common analysis tools (e.g. `list_functions`, `decompile_function`, `get_strings`) alongside five meta-tools:
+A `ToolTransform` (a `CatalogTransform` subclass defined in `re_mcp.transforms`) is applied at the server level. It pins a set of common analysis tools (e.g. `list_functions`, `decompile_function`, `list_strings`) alongside five meta-tools:
 
 - `search_tools` — regex discovery over all non-pinned tools.
 - `get_schema` — parameter schemas and return shapes for tools by name.
-- `execute` — sandboxed Python that chains `await invoke` calls for multi-step pipelines and parallel queries.
-- `batch` — sequential multi-tool execution with per-item error collection and progress reporting.
+- `execute` — Python 3 against the Ghidra API and every tool, run in the worker in one transaction (forwards to the worker's internal `_execute`; see `context/design.md`).
+- `batch` — up to 100 tool calls in one transaction with `$N` references, `if_revision`, `operation_id` and `dry_run` (forwards to the worker's internal `_batch`).
 - `call` — lightweight proxy for calling any tool by name, including hidden tools not in the client tool list.
 
 Tools not in the pinned set are hidden from the tool listing but callable via `call`, `batch`, or `execute`.
@@ -170,7 +170,7 @@ Settings use the `GHIDRA_MCP_` environment variable prefix. The list below uses 
 - `<PREFIX>LOG_LEVEL` — logging level (`DEBUG`, `INFO`, `WARNING`, `ERROR`, `CRITICAL`); defaults to `WARNING`, output goes to stderr
 - `<PREFIX>LOG_DIR` — directory that receives per-run log files. When set, each component tees Python logging to `<dir>/<run_id>-<label>.log` (labels: `daemon`, `proxy`, `supervisor` for direct stdio mode), each worker to `<dir>/<run_id>-worker-<db>.log`, and each worker's raw stderr is captured to `<dir>/<run_id>-worker-<db>.stderr` (catches pre-logging output and C-level crashes). `<run_id>` is a timestamp generated once per supervisor start. When unset, logs go only to stderr (inherited by workers).
 - `<PREFIX>IDLE_TIMEOUT` — idle auto-shutdown timeout in seconds for auto-spawned daemons (default `300`). Set to `0` to disable. When the daemon has no active HTTP connections, no MCP sessions, no in-flight worker calls, and no proxy keepalive for this duration, it shuts down gracefully. Only affects daemons spawned by the proxy; `<backend> serve` defaults to `0` (use `--idle-timeout=N` to override)
-- `<PREFIX>DISABLE_EXECUTE` — hides the `execute` meta-tool (sandboxed Python code mode) when set to `1`, `true`, `yes`, or `on`
+- `<PREFIX>DISABLE_EXECUTE` — hides the `execute` meta-tool (Python against the Ghidra API) when set to `1`, `true`, `yes`, or `on`
 - `<PREFIX>DISABLE_BATCH` — hides the `batch` meta-tool when set to `1`, `true`, `yes`, or `on`
 - `<PREFIX>DISABLE_TOOL_SEARCH` — disables server-side progressive tool disclosure when set to `1`, `true`, `yes`, or `on`. All tools become directly visible and callable; `search_tools` and `get_schema` meta-tools are removed. Useful with clients that provide their own tool deferral (e.g. Claude Code).
 
@@ -225,7 +225,7 @@ List-returning tools use `paginate(items, offset, limit)`, `paginate_iter(items,
 }
 ```
 
-The default limit is 100 for most tools. Some tools use smaller defaults: 50 for batch decompilation/disassembly export and segment listing, 20 for `find_code_by_string`. There is no hard cap — callers can request larger pages when needed.
+The default limit is 100 for most tools. Some tools use smaller defaults: 50 for batch decompilation/disassembly export and memory block listing, 20 for `find_code_by_string`. There is no hard cap — callers can request larger pages when needed.
 
 ## Module Organization
 
@@ -237,13 +237,12 @@ The default limit is 100 for most tools. Some tools use smaller defaults: 50 for
 | `daemon.py` | Persistent streamable HTTP daemon — runs `ProxyMCP` with bearer token auth and state file for proxy discovery. Workers survive client reconnections |
 | `proxy.py` | Stdio-to-HTTP bridge — auto-spawns the daemon if needed, then forwards MCP messages bidirectionally between stdio and the daemon's HTTP endpoint |
 | `worker_provider.py` | `WorkerPoolProvider(Provider)` — manages worker subprocesses, exposes tools via `RoutingTool(Tool)` and resources via `RoutingTemplate(ResourceTemplate)` through the native provider chain |
-| `backend.py` | `Backend` protocol and `BackendInfo` dataclass — each backend (IDA, Ghidra, ...) implements this and registers via `re_mcp.backends` entry points |
+| `backend.py` | `Backend` protocol and `BackendInfo` dataclass — the Ghidra backend implements this and registers via `re_mcp.backends` entry points |
 | `context.py` | `try_get_context()`, `try_get_session_id()`, and `notify_resources_changed()` — FastMCP context helpers with no backend dependencies, used by supervisor modules |
 | `exceptions.py` | `BackendError(ToolError)` — base structured error type for all backends |
 | `server.py` | `MainThreadExecutor` work queue and `BackendServer(FastMCP)` — subclassed by each backend to dispatch sync tools/resources to the main thread |
 | `helpers.py` | Backend-agnostic utilities — address parsing/formatting, pagination (`paginate`, `paginate_iter`, `async_paginate_iter`), `dispatch_to_main` main-thread dispatch, MCP annotation presets, `Annotated` parameter type aliases (`Address`, `Offset`, `Limit`, `FilterPattern`, `HexBytes`), filter compilation |
 | `models.py` | Shared Pydantic models (e.g. `PaginatedResult`) used across backends |
-| `sandbox.py` | `RestrictedPythonSandbox` — AST-restricted Python execution for the `execute` meta-tool |
 | `transforms.py` | `ToolTransform(CatalogTransform)` — pins common tools, adds `search_tools`, `get_schema`, `execute`, `batch`, and `call` meta-tools, hides the rest from listing (callable via `call`/`batch`/`execute`) |
 | `_process.py` | Platform-aware process utilities (`pid_alive`, `pid_exit_code`, `IS_WINDOWS`) — stdlib only, no backend dependencies |
 | `__init__.py` | `configure_logging()`, `ensure_run_id()`, `resolve_log_file()`, `get_version()` — shared infrastructure utilities |
@@ -260,6 +259,11 @@ The default limit is 100 for most tools. Some tools use smaller defaults: 50 for
 | `models.py` | Re-exports shared Pydantic models from `re_mcp.models` for convenient single-source imports |
 | `transforms.py` | Ghidra-specific tool visibility constants — `PINNED_TOOLS` and `MANAGEMENT_TOOLS` frozensets |
 | `resources.py` | MCP resources — read-only, cacheable context endpoints |
+| `programmable.py` | Worker side of `batch` and `execute`: tool registry, `$N` references, the single outer transaction, guards and replay |
+| `project_index.py` | Reads a `.gpr` project's file index without a JVM (`list_project_files`) |
+| `server_url.py` | Parses `ghidra://host[:port]/repository/path` URLs (no JVM) |
+| `server_projects.py` | Ghidra Server connections and the local projects bound to repositories |
+| `server_admin.py` | Repository commands run in a short-lived JVM process for the supervisor's repository tools |
 | `prompts/` | MCP prompt stub (no prompts registered yet) |
 | `__init__.py` | Lazy `bootstrap()` to start pyghidra/JVM, plus `find_ghidra_dir()` for Ghidra installation discovery |
 | `_cli.py` | Convenience CLI entry point — `re-mcp-ghidra` is equivalent to `re-mcp --backend ghidra` |
@@ -297,60 +301,23 @@ Key conventions:
 
 ### Tool module grouping
 
-The tool modules are organized by domain. Some modules contain both read and write operations; the grouping reflects the primary purpose of each module.
+Each module in `tools/` registers the tools of one domain. `docs/tools.md` lists every tool
+with its description.
 
-**Query-oriented tools** (primarily read operations):
-- `functions.py` — function listing, info, disassembly, decompilation, renaming, deletion, bounds
-- `xrefs.py` — cross-reference queries, call graphs
-- `search.py` — string extraction, byte/text/immediate search, string-to-code reference lookup
-- `data.py` — raw byte reading, segment listing, pointer table reading
-- `imports_exports.py` — imports, exports, entry points, import name/ordinal modification
-- `cfg.py` — basic blocks, CFG edges
-- `operands.py` — instruction decoding, operand value resolution
-- `frames.py` — stack frames, local variables
-- `ctree.py` — AST exploration
-- `processor.py` — architecture info, instruction classification, instruction set listing
-- `switches.py` — switch/jump table analysis
-- `regfinder.py` — register value tracking
-- `nalt.py` — address metadata: source line numbers, analysis flags, library item marking
-- `analysis.py` — auto-analysis control, analysis problems, fixups, exception handlers, segment registers
-- `export.py` — batch decompilation/disassembly export, output file generation
-
-**Mutation-oriented tools** (primarily write operations):
-- `database.py` — database lifecycle, metadata, flags, file region mapping
-- `chunks.py` — function chunk (tail) listing and management
-- `patching.py` — byte patching, function/code creation, undefine
-- `assemble.py` — instruction assembly
-- `comments.py` — comment management
-- `names.py` — address renaming
-- `types.py`, `typeinf.py` — type application and local type management
-- `function_type.py` — function prototypes and calling conventions
-- `structs.py` — structure CRUD
-- `enums.py` — enum CRUD
-- `decompiler.py` — pseudocode variable listing/renaming/retyping, microcode, decompiler comments
-- `operand_repr.py` — operand display changes
-- `segments.py`, `rebase.py` — segment manipulation
-- `xref_manip.py` — cross-reference manipulation
-- `entry_manip.py` — entry point addition, renaming, and forwarders
-- `makedata.py` — data type definition
-- `func_flags.py` — function flag and hidden range management
-- `srclang.py` — source declaration parsing via compiler parsers
-
-**Utility tools**:
-- `utility.py` — number conversion, expression evaluation, script execution
-- `bookmarks.py` — bookmark management
-- `colors.py` — address/function coloring
-- `undo.py` — undo/redo
-- `dirtree.py` — directory tree management
-- `signatures.py` — Function ID and data type archives
-- `demangle.py` — C++ name demangling
+- **Program and lifecycle:** `database.py`, `analysis.py`, `documentation.py`, `undo.py`, `program_ops.py` (internal `_batch` / `_execute`)
+- **Functions:** `functions.py`, `function_type.py`, `function_flags.py`, `function_ranges.py`, `frames.py`, `decompiler.py`, `decompiler_tokens.py`, `export.py`
+- **Code and data:** `patching.py`, `assemble.py`, `data.py`, `data_definitions.py`, `memory_blocks.py`, `image_base.py`, `operands.py`, `operand_format.py`, `processor.py`, `register_values.py`, `cfg.py`, `switches.py`, `address_info.py`
+- **Symbols and references:** `names.py`, `xrefs.py`, `xref_edits.py`, `imports_exports.py`, `entry_points.py`, `demangle.py`, `search.py`, `comments.py`, `bookmarks.py`, `colors.py`, `program_tree.py`
+- **Types:** `types.py`, `data_type_lookup.py`, `structs.py`, `enums.py`, `c_source.py`, `function_id.py`
+- **Scripts and servers:** `scripts.py`, `versioning.py`
+- **Utility:** `utility.py`
 
 ## Resources
 
 MCP resources provide read-only context about the open database. They are defined in each backend's `resources.py` and reserved for genuinely static or aggregate data that benefits from caching:
 
 - **Static binary data** — imports, exports, entry points (baked into the binary, stable), each with a regex search variant
-- **Aggregate snapshot** — statistics (function/segment/entry point/string/name counts, code coverage)
+- **Aggregate snapshot** — statistics (function/memory block/entry point/string/name counts, code coverage)
 
 The supervisor also owns one resource (`<scheme>://databases`) that lists all open databases with worker state.
 

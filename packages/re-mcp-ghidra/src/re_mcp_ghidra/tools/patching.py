@@ -51,7 +51,7 @@ class MakeCodeResult(BaseModel):
     status: str = Field(description="Status message.")
 
 
-class UndefineResult(BaseModel):
+class ClearCodeUnitsResult(BaseModel):
     """Result of undefining an item."""
 
     address: str = Field(description="Target address (hex).")
@@ -215,8 +215,8 @@ def register(mcp: FastMCP) -> None:
             int,
             Field(description="Number of bytes from address to undefine. Example: 16"),
         ] = 1,
-    ) -> UndefineResult:
-        """Undefine code and data over a byte range, leaving the byte values unchanged.
+    ) -> ClearCodeUnitsResult:
+        """Clear code and data over a byte range, leaving the byte values unchanged.
 
         Use before re-typing or re-disassembling a region; patch_bytes changes the
         bytes themselves. Returns address, size and status "ok".
@@ -226,7 +226,7 @@ def register(mcp: FastMCP) -> None:
         addr = resolve_address(address)
         end_addr = addr.add(size - 1)
 
-        tx_id = program.startTransaction("Undefine bytes")
+        tx_id = program.startTransaction("Clear code units")
         try:
             listing.clearCodeUnits(addr, end_addr, False)
             program.endTransaction(tx_id, True)
@@ -234,10 +234,10 @@ def register(mcp: FastMCP) -> None:
             program.endTransaction(tx_id, False)
             raise GhidraError(
                 f"Failed to undefine {size} bytes at {format_address(addr.getOffset())}",
-                error_type="UndefineFailed",
+                error_type="ClearFailed",
             ) from e
 
-        return UndefineResult(
+        return ClearCodeUnitsResult(
             address=format_address(addr.getOffset()),
             size=size,
             status="ok",

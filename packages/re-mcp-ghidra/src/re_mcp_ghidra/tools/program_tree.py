@@ -4,9 +4,8 @@
 
 """Program tree / folder management tools.
 
-Ghidra organizes code into a Program Tree with modules and fragments.
-This is the equivalent of IDA's directory tree (dirtree) for organizing
-functions and code into folders.
+Ghidra organizes code into a Program Tree with modules (folders) and
+fragments.
 """
 
 from __future__ import annotations

@@ -167,7 +167,7 @@ def test_extract_db_prefix_empty_segment():
 
 def test_extract_roundtrip():
     """prefix_uri and extract_db_prefix are inverses for ghidra:// URIs."""
-    original = "ghidra://db/segments"
+    original = "ghidra://db/memory_blocks"
     db_id = "testdb"
     prefixed = prefix_uri(original, db_id, "ghidra")
     extracted_db, extracted_uri = extract_db_prefix(prefixed, "ghidra")
@@ -207,10 +207,10 @@ def test_expand_uri_template_query_params_empty():
 def test_expand_uri_template_mixed():
     """Path and query parameters together."""
     result = expand_uri_template(
-        "ghidra://db/segments/search/{pattern}{?offset,limit}",
+        "ghidra://db/memory_blocks/search/{pattern}{?offset,limit}",
         {"pattern": "text", "offset": 0, "limit": 10},
     )
-    assert result == "ghidra://db/segments/search/text?offset=0&limit=10"
+    assert result == "ghidra://db/memory_blocks/search/text?offset=0&limit=10"
 
 
 def test_expand_uri_template_no_params():
@@ -737,7 +737,7 @@ class TestBackgroundAnalysis:
                 "bitness": 64,
                 "file_type": "ELF",
                 "function_count": 500,
-                "segment_count": 10,
+                "memory_block_count": 10,
             }
         )
 
@@ -746,7 +746,7 @@ class TestBackgroundAnalysis:
         await pool._background_analysis(worker, mcp_session=None)
 
         assert worker.metadata["function_count"] == 500
-        assert worker.metadata["segment_count"] == 10
+        assert worker.metadata["memory_block_count"] == 10
         assert worker.analysis_error is None
 
     @pytest.mark.asyncio

@@ -102,9 +102,9 @@ program via `pyghidra.ghidra_script`'s mechanism, inside a transaction like `exe
 
 ## Naming
 
-Tool names describe Ghidra concepts, not IDA ones (upstream ported the IDA tool set):
-segment → memory block, ctree → clang tokens, nalt/regvars/chunks reviewed one by one.
-The rename list lives in `context/renames.md` with the reason for each.
+Tool, module, model and field names use Ghidra's terms (memory block, data type,
+program tree, prototype, decompiler tokens, function ranges). The rename list lives in
+`context/renames.md` with the reason for each.
 
 ## Grading
 

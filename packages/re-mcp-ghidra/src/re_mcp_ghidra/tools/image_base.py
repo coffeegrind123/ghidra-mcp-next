@@ -20,16 +20,16 @@ from re_mcp_ghidra.helpers import (
 from re_mcp_ghidra.session import session
 
 
-class RebaseProgramResult(BaseModel):
+class SetImageBaseResult(BaseModel):
     """Result of rebasing the program."""
 
     old_base: str = Field(description="Previous image base address (hex).")
     new_base: str = Field(description="New image base address (hex).")
-    delta: str = Field(description="Rebase delta (hex).")
+    delta: str = Field(description="Image base shift (hex).")
 
 
 def register(mcp: FastMCP) -> None:
-    @mcp.tool(annotations=ANNO_DESTRUCTIVE, tags={"segments"})
+    @mcp.tool(annotations=ANNO_DESTRUCTIVE, tags={"memory_blocks"})
     @session.require_open
     def set_image_base(
         delta: Annotated[
@@ -39,8 +39,8 @@ def register(mcp: FastMCP) -> None:
                 "decimal; a leading '-' shifts down. Example: '-0x1000'"
             ),
         ],
-    ) -> RebaseProgramResult:
-        """Rebase the whole program by moving its image base by a signed delta.
+    ) -> SetImageBaseResult:
+        """Move the whole program by shifting its image base by a signed delta.
 
         Destructive and global: every address in the program moves. Use it to match a
         runtime load address. Returns old_base, new_base and delta (all hex).
@@ -58,19 +58,21 @@ def register(mcp: FastMCP) -> None:
         addr_factory = program.getAddressFactory()
         new_base = addr_factory.getDefaultAddressSpace().getAddress(new_offset)
 
-        tx_id = program.startTransaction("Rebase program")
+        tx_id = program.startTransaction("Set image base")
         try:
             program.setImageBase(new_base, True)
             program.endTransaction(tx_id, True)
         except Exception as e:
             program.endTransaction(tx_id, False)
-            raise GhidraError(f"Failed to rebase program: {e}", error_type="RebaseFailed") from e
+            raise GhidraError(
+                f"Failed to set image base: {e}", error_type="SetImageBaseFailed"
+            ) from e
 
         delta_str = (
             format_address(delta_val) if delta_val >= 0 else f"-{format_address(-delta_val)}"
         )
 
-        return RebaseProgramResult(
+        return SetImageBaseResult(
             old_base=format_address(old_offset),
             new_base=format_address(new_offset),
             delta=delta_str,

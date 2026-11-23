@@ -4,7 +4,7 @@
 
 """Backend protocol and discovery for re-mcp.
 
-Each backend (IDA, Ghidra, ...) implements the :class:`Backend` protocol
+The Ghidra backend implements the :class:`Backend` protocol
 and registers itself via a ``re_mcp.backends`` entry point.  The core
 infrastructure discovers installed backends at runtime and loads one
 based on user selection or auto-detection.
@@ -35,7 +35,7 @@ class BackendInfo:
     """Short identifier (e.g. ``"ida"``, ``"ghidra"``)."""
 
     display_name: str
-    """Human-readable name (e.g. ``"IDA Pro"``, ``"Ghidra"``)."""
+    """Human-readable name (e.g. ``"Ghidra"``)."""
 
     uri_scheme: str
     """URI scheme for MCP resources (e.g. ``"ida"``, ``"ghidra"``)."""
@@ -50,7 +50,7 @@ class BackendInfo:
     """Tools registered on the supervisor (not proxied to workers)."""
 
     env_prefix: str
-    """Environment variable prefix (e.g. ``"IDA_MCP_"``)."""
+    """Environment variable prefix (e.g. ``"GHIDRA_MCP_"``)."""
 
     state_dir_name: str = "re-mcp"
     """Subdirectory name for daemon state files."""
@@ -77,8 +77,7 @@ class Backend(Protocol):
         The core registers generic management tools (``close_database``,
         ``list_databases``, ``wait_for_analysis``, ``save_database``).
         The backend registers tools with backend-specific parameters
-        (e.g. IDA's ``open_database`` with ``processor``/``fat_arch``,
-        or Ghidra's with ``language``/``compiler_spec``).
+        (e.g. ``open_database`` with ``language``/``compiler_spec``).
         """
         ...
 

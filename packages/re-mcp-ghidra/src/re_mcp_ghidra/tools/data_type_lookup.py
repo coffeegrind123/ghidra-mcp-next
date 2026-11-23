@@ -2,7 +2,7 @@
 #
 # SPDX-License-Identifier: MIT OR Apache-2.0
 
-"""Extended type library management tools -- detailed type info and deletion."""
+"""Data type lookup and deletion in the program's data type manager."""
 
 from __future__ import annotations
 
@@ -29,8 +29,8 @@ class TypeMember(BaseModel):
     comment: str = Field(default="", description="Member comment.")
 
 
-class GetLocalTypeResult(BaseModel):
-    """Detailed local type information."""
+class GetDataTypeResult(BaseModel):
+    """Detailed data type information."""
 
     name: str = Field(description="Type name.")
     category: str = Field(description="Category path.")
@@ -45,7 +45,7 @@ class GetLocalTypeResult(BaseModel):
     )
 
 
-class DeleteLocalTypeResult(BaseModel):
+class DeleteDataTypeResult(BaseModel):
     """Result of deleting a local type."""
 
     name: str = Field(description="Deleted type name.")
@@ -56,7 +56,7 @@ class DeleteLocalTypeResult(BaseModel):
 def register(mcp: FastMCP) -> None:
     @mcp.tool(annotations=ANNO_READ_ONLY, tags={"types"})
     @session.require_open
-    def get_data_type(name: str) -> GetLocalTypeResult:
+    def get_data_type(name: str) -> GetDataTypeResult:
         """Get detailed type information including members by name.
 
         For structs/unions, returns all member details (name, type, offset,
@@ -127,7 +127,7 @@ def register(mcp: FastMCP) -> None:
             kind = "typedef"
 
         cat = dt.getCategoryPath()
-        return GetLocalTypeResult(
+        return GetDataTypeResult(
             name=dt.getName(),
             category=str(cat) if cat else "",
             size=dt.getLength(),
@@ -147,7 +147,7 @@ def register(mcp: FastMCP) -> None:
                 "struct, function definition, ...). Example: 'DWORD_PTR'"
             ),
         ],
-    ) -> DeleteLocalTypeResult:
+    ) -> DeleteDataTypeResult:
         """Delete any data type by exact name from the program's data type manager.
 
         Works for every kind of type; delete_structure and delete_enum are the
@@ -177,7 +177,7 @@ def register(mcp: FastMCP) -> None:
             program.endTransaction(tx_id, False)
             raise GhidraError(f"Failed to delete type: {e}", error_type="DeleteFailed") from e
 
-        return DeleteLocalTypeResult(
+        return DeleteDataTypeResult(
             name=name,
             category=str(cat) if cat else "",
             status="deleted",

@@ -2,7 +2,7 @@
 #
 # SPDX-License-Identifier: MIT OR Apache-2.0
 
-"""Data and memory tools — read bytes, segments, etc."""
+"""Data and memory tools — read bytes, memory_blocks, etc."""
 
 from __future__ import annotations
 
@@ -33,7 +33,7 @@ class ReadBytesResult(BaseModel):
     ascii: str = ""
 
 
-class SegmentInfo(BaseModel):
+class MemoryBlockInfo(BaseModel):
     name: str
     start: str
     end: str
@@ -98,7 +98,7 @@ def register(mcp: FastMCP) -> None:
         offset: Offset = 0,
         limit: Limit = 100,
     ) -> dict:
-        """List all memory segments/blocks."""
+        """List all memory memory_blocks/blocks."""
         program = session.program
         mem = program.getMemory()
         blocks = list(mem.getBlocks())
@@ -108,7 +108,7 @@ def register(mcp: FastMCP) -> None:
             start = block.getStart()
             end = block.getEnd()
             items.append(
-                SegmentInfo(
+                MemoryBlockInfo(
                     name=block.getName(),
                     start=format_address(start.getOffset()),
                     end=format_address(end.getOffset()),

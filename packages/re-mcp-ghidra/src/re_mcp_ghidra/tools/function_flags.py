@@ -36,7 +36,7 @@ class SetFunctionFlagsResult(BaseModel):
     status: str = Field(description="Status.")
 
 
-class ByteFlagsResult(BaseModel):
+class CodeUnitResult(BaseModel):
     """Byte-level flags at an address."""
 
     address: str = Field(description="Address (hex).")
@@ -174,7 +174,7 @@ def register(mcp: FastMCP) -> None:
     @session.require_open
     def get_code_unit(
         address: Address,
-    ) -> ByteFlagsResult:
+    ) -> CodeUnitResult:
         """Classify what occupies an address: instruction, defined data or undefined bytes.
 
         A quick listing probe; use decode_instruction for operand details or
@@ -225,7 +225,7 @@ def register(mcp: FastMCP) -> None:
                 ]
             )
 
-        return ByteFlagsResult(
+        return CodeUnitResult(
             address=format_address(addr.getOffset()),
             is_instruction=is_instruction,
             is_data=is_data,

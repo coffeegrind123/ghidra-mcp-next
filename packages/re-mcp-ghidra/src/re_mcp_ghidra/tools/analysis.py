@@ -36,7 +36,7 @@ class AnalysisCompleteResult(BaseModel):
 
     status: str = Field(description="Status: 'analysis_complete'.")
     function_count: int = Field(description="Number of functions after analysis.")
-    segment_count: int = Field(description="Number of memory blocks.")
+    memory_block_count: int = Field(description="Number of memory blocks.")
     entry_point_count: int = Field(description="Number of entry points.")
     min_address: str = Field(description="Minimum address (hex).")
     max_address: str = Field(description="Maximum address (hex).")
@@ -130,7 +130,7 @@ def register(mcp: FastMCP) -> None:
         return AnalysisCompleteResult(
             status="analysis_complete",
             function_count=func_count,
-            segment_count=block_count,
+            memory_block_count=block_count,
             entry_point_count=entry_count,
             min_address=format_address(min_addr.getOffset()) if min_addr else "0x0",
             max_address=format_address(max_addr.getOffset()) if max_addr else "0x0",

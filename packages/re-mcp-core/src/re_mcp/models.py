@@ -22,16 +22,16 @@ class PaginatedResult[T](BaseModel):
 
 
 # ---------------------------------------------------------------------------
-# Shared models used by both IDA and Ghidra tool modules
+# Shared models used by the tool modules
 # ---------------------------------------------------------------------------
 
 
-class FunctionChunk(BaseModel):
-    """A non-contiguous chunk of a function."""
+class FunctionRange(BaseModel):
+    """One address range of a function body."""
 
-    start: str = Field(description="Chunk start address (hex).")
-    end: str = Field(description="Chunk end address (hex, exclusive).")
-    size: int = Field(description="Chunk size in bytes.")
+    start: str = Field(description="Range start address (hex).")
+    end: str = Field(description="Range end address (hex, exclusive).")
+    size: int = Field(description="Range size in bytes.")
 
 
 class FunctionSummary(BaseModel):

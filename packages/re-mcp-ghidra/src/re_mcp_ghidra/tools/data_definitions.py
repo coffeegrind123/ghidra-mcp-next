@@ -25,7 +25,7 @@ from re_mcp_ghidra.session import session
 # ---------------------------------------------------------------------------
 
 
-class MakeDataResult(BaseModel):
+class CreateDataResult(BaseModel):
     """Result of a make-data operation (byte/word/dword/qword/float/double)."""
 
     address: str = Field(description="Target address (hex).")
@@ -113,7 +113,7 @@ def register(mcp: FastMCP) -> None:
                 ge=1,
             ),
         ] = 1,
-    ) -> MakeDataResult:
+    ) -> CreateDataResult:
         """Define a primitive numeric data item (or array of them) at an address.
 
         Clears existing code units in the range first. Use create_string for text,
@@ -147,10 +147,10 @@ def register(mcp: FastMCP) -> None:
             program.endTransaction(tx_id, False)
             raise GhidraError(
                 f"Failed to define {data_type} at {format_address(addr.getOffset())}: {e}",
-                error_type="MakeDataFailed",
+                error_type="CreateDataFailed",
             ) from e
 
-        return MakeDataResult(
+        return CreateDataResult(
             address=format_address(addr.getOffset()),
             data_type=data_type,
             size=elem_size * count,
@@ -229,7 +229,7 @@ def register(mcp: FastMCP) -> None:
             program.endTransaction(tx_id, False)
             raise GhidraError(
                 f"Failed to define string at {format_address(addr.getOffset())}: {e}",
-                error_type="MakeDataFailed",
+                error_type="CreateDataFailed",
             ) from e
 
         return MakeStringResult(
@@ -301,7 +301,7 @@ def register(mcp: FastMCP) -> None:
             program.endTransaction(tx_id, False)
             raise GhidraError(
                 f"Failed to create array at {format_address(addr.getOffset())}: {e}",
-                error_type="MakeDataFailed",
+                error_type="CreateDataFailed",
             ) from e
 
         return MakeArrayResult(

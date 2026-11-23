@@ -85,7 +85,7 @@ def test_ensure_run_id_generates_and_persists():
 
 def test_sanitize_label_replaces_unsafe_chars():
     # Dots are kept (safe in a leaf filename); separators are scrubbed.
-    assert _sanitize_label("worker/db.i64") == "worker_db.i64"
+    assert _sanitize_label("worker/db.gpr") == "worker_db.gpr"
     assert _sanitize_label("safe-label_1.2") == "safe-label_1.2"
     assert _sanitize_label("a b:c") == "a_b_c"
     assert "/" not in _sanitize_label("../evil/x")

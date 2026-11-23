@@ -31,11 +31,9 @@ wheels/
 .DS_Store
 Thumbs.db
 
-# IDA Pro artifacts
-*.i64
-*.id0
-*.id1
-*.id2
-*.nam
-*.til
-*.idb
+# Ghidra projects created next to sample binaries
+ghidra_projects/
+
+# Session handoffs and survey data: local only (they name private paths)
+context/handoff-*.md
+context/repo-search-*.tsv

@@ -5,7 +5,7 @@
 """Shared utilities for address parsing, formatting, pagination, and tool annotations.
 
 Backend-agnostic helpers consumed by both the supervisor and backend
-helper modules.  Nothing here imports ``ida_*``, ``ghidra``, or any
+helper modules.  Nothing here imports ``ghidra``, ``java``, or any
 other backend-specific package, so this module is safe to import
 everywhere.
 """
@@ -29,7 +29,7 @@ log = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
-# Main-thread dispatch for single-threaded backends (idalib, Ghidra/JVM)
+# Main-thread dispatch for the thread-affine Ghidra JVM
 # ---------------------------------------------------------------------------
 
 _main_executor: concurrent.futures.Executor | None = None

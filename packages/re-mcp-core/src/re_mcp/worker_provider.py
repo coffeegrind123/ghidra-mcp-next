@@ -89,7 +89,7 @@ _WORKER_META_KEYS = (
     "bitness",
     "file_type",
     "function_count",
-    "segment_count",
+    "memory_block_count",
     "capabilities",
 )
 
@@ -225,8 +225,8 @@ def extract_db_prefix(uri: str, scheme: str) -> tuple[str | None, str]:
 def _canonical_path_for(backend: type[Backend], path: str, **kwargs: object) -> str:
     """Canonical key for a database, delegating to the backend.
 
-    Each backend defines its own canonical-path logic (e.g. IDA resolves
-    symlinks, strips DB extensions, handles fat Mach-O slices, etc.).
+    The backend defines the canonical-path logic (e.g. resolving symlinks,
+    or keying a project file plus the program inside it).
     """
     return backend.canonical_path(path, **kwargs)
 
@@ -1283,8 +1283,8 @@ class WorkerPoolProvider(Provider):
     ) -> dict[str, Any]:
         """Spawn a worker subprocess and open a database in it.
 
-        Backend-specific parameters (e.g. ``processor``, ``fat_arch`` for
-        IDA, or ``language``, ``compiler_spec`` for Ghidra) are forwarded
+        Backend-specific parameters (e.g. ``language``, ``compiler_spec``,
+        ``program``) are forwarded
         to the worker's ``open_database`` call via *backend_kwargs*.
         """
         # Resolve the real path but keep the original extension so the worker
@@ -1414,7 +1414,7 @@ class WorkerPoolProvider(Provider):
 
         Handles session context, cleanup registration, worker spawning, and
         resource-change notification.  Backends call this after their own
-        pre-validation (e.g. IDA's fat-binary / processor-ambiguity checks).
+        pre-validation.
         """
         ctx = try_get_context()
         sid = ctx.session_id if ctx else None
@@ -1454,7 +1454,7 @@ class WorkerPoolProvider(Provider):
         the worker so it can distinguish raw binaries from existing databases.
         *canonical* is the backend-normalised key used for internal lookup.
 
-        Backend-specific parameters (e.g. ``processor``, ``fat_arch`` for IDA)
+        Backend-specific parameters (e.g. ``language``, ``compiler_spec``)
         are forwarded to the worker's ``open_database`` call via *backend_kwargs*.
 
         Sets ``worker._ready_event`` when the database is open and the worker

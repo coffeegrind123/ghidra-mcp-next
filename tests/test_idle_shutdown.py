@@ -380,27 +380,27 @@ class TestWorkerPoolProviderIdleMethods:
     @pytest.mark.asyncio
     async def test_has_active_work_with_busy_worker(self):
         pool = WorkerPoolProvider(backend=GhidraBackend)
-        w = Worker(database_id="test", file_path="/tmp/test.i64")
+        w = Worker(database_id="test", file_path="/tmp/test.gpr")
         w.state = WorkerState.IDLE
         w._active_calls = 1
-        pool._workers["/tmp/test.i64"] = w
+        pool._workers["/tmp/test.gpr"] = w
         assert await pool.has_active_work() is True
 
     @pytest.mark.asyncio
     async def test_has_active_work_with_opening_worker(self):
         pool = WorkerPoolProvider(backend=GhidraBackend)
-        w = Worker(database_id="test", file_path="/tmp/test.i64")
-        pool._workers["/tmp/test.i64"] = w
+        w = Worker(database_id="test", file_path="/tmp/test.gpr")
+        pool._workers["/tmp/test.gpr"] = w
         assert await pool.has_active_work() is True
 
     @pytest.mark.asyncio
     async def test_has_active_work_with_analyzing_worker(self):
         pool = WorkerPoolProvider(backend=GhidraBackend)
-        w = Worker(database_id="test", file_path="/tmp/test.i64")
+        w = Worker(database_id="test", file_path="/tmp/test.gpr")
         w.state = WorkerState.IDLE
         w._ready_event.set()
         w._analysis_task = asyncio.ensure_future(asyncio.sleep(999))
-        pool._workers["/tmp/test.i64"] = w
+        pool._workers["/tmp/test.gpr"] = w
         try:
             assert await pool.has_active_work() is True
         finally:

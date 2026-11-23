@@ -2,7 +2,7 @@
 #
 # SPDX-License-Identifier: MIT OR Apache-2.0
 
-"""Function chunk/body management tools."""
+"""Function range/body management tools."""
 
 from __future__ import annotations
 
@@ -19,7 +19,7 @@ from re_mcp_ghidra.helpers import (
     resolve_address,
     resolve_function,
 )
-from re_mcp_ghidra.models import FunctionChunk
+from re_mcp_ghidra.models import FunctionRange
 from re_mcp_ghidra.session import session
 
 # ---------------------------------------------------------------------------
@@ -27,29 +27,29 @@ from re_mcp_ghidra.session import session
 # ---------------------------------------------------------------------------
 
 
-class ListFunctionChunksResult(BaseModel):
-    """Function chunks (address ranges)."""
+class ListFunctionRangesResult(BaseModel):
+    """Function ranges (address ranges)."""
 
     function: str = Field(description="Function address (hex).")
     function_name: str = Field(description="Function name.")
-    chunk_count: int = Field(description="Number of address ranges.")
-    chunks: list[FunctionChunk] = Field(description="Address ranges in the function body.")
+    range_count: int = Field(description="Number of address ranges.")
+    ranges: list[FunctionRange] = Field(description="Address ranges in the function body.")
 
 
-class AppendFunctionTailResult(BaseModel):
-    """Result of appending a function tail."""
-
-    function: str = Field(description="Function address (hex).")
-    tail_start: str = Field(description="Tail start address (hex).")
-    tail_end: str = Field(description="Tail end address (hex, exclusive).")
-
-
-class RemoveFunctionTailResult(BaseModel):
-    """Result of removing a function tail."""
+class AddFunctionRangeResult(BaseModel):
+    """Result of adding an address range to a function."""
 
     function: str = Field(description="Function address (hex).")
-    removed_tail_start: str = Field(description="Removed range start (hex).")
-    removed_tail_end: str = Field(description="Removed range end (hex, exclusive).")
+    range_start: str = Field(description="Range start address (hex).")
+    range_end: str = Field(description="Range end address (hex, exclusive).")
+
+
+class RemoveFunctionRangeResult(BaseModel):
+    """Result of removing an address range from a function."""
+
+    function: str = Field(description="Function address (hex).")
+    removed_range_start: str = Field(description="Removed range start (hex).")
+    removed_range_end: str = Field(description="Removed range end (hex, exclusive).")
 
 
 def register(mcp: FastMCP) -> None:
@@ -57,8 +57,8 @@ def register(mcp: FastMCP) -> None:
     @session.require_open
     def list_function_ranges(
         address: Address,
-    ) -> ListFunctionChunksResult:
-        """List all address ranges (chunks) in a function body.
+    ) -> ListFunctionRangesResult:
+        """List all address ranges (ranges) in a function body.
 
         Non-contiguous functions have multiple ranges due to compiler
         optimizations like basic block reordering or hot/cold splitting.
@@ -69,25 +69,25 @@ def register(mcp: FastMCP) -> None:
         func = resolve_function(address)
         body = func.getBody()
 
-        chunks = []
+        ranges = []
         ranges = body.iterator()
         while ranges.hasNext():
             addr_range = ranges.next()
             start = addr_range.getMinAddress().getOffset()
             end = addr_range.getMaxAddress().getOffset() + 1
-            chunks.append(
-                FunctionChunk(
+            ranges.append(
+                FunctionRange(
                     start=format_address(start),
                     end=format_address(end),
                     size=end - start,
                 )
             )
 
-        return ListFunctionChunksResult(
+        return ListFunctionRangesResult(
             function=format_address(func.getEntryPoint().getOffset()),
             function_name=func.getName(),
-            chunk_count=len(chunks),
-            chunks=chunks,
+            range_count=len(ranges),
+            ranges=ranges,
         )
 
     @mcp.tool(annotations=ANNO_MUTATE, tags={"functions"})
@@ -96,12 +96,12 @@ def register(mcp: FastMCP) -> None:
         function_address: Address,
         start: Address,
         end: Address,
-    ) -> AppendFunctionTailResult:
+    ) -> AddFunctionRangeResult:
         """Add the range [start, end) to the body of the function containing function_address.
 
-        Use it to attach a split-off tail (cold block, shared epilogue) to its owner;
+        Use it to attach a split-off range (cold block, shared epilogue) to its owner;
         remove_function_range undoes it, list_function_ranges shows the result. end is
-        exclusive. Returns function (entry address), tail_start and tail_end.
+        exclusive. Returns function (entry address), range_start and range_end.
         """
         from ghidra.program.model.address import AddressSet  # noqa: PLC0415
 
@@ -116,7 +116,7 @@ def register(mcp: FastMCP) -> None:
         last_addr = start_addr.getNewAddress(end_offset - 1)
 
         program = session.program
-        tx_id = program.startTransaction("Append function tail")
+        tx_id = program.startTransaction("Add function range")
         try:
             # Build new body = existing body + new range
             current_body = func.getBody()
@@ -130,49 +130,49 @@ def register(mcp: FastMCP) -> None:
         except Exception as e:
             program.endTransaction(tx_id, False)
             raise GhidraError(
-                f"Failed to append tail [{format_address(start_addr.getOffset())}, "
+                f"Failed to add range [{format_address(start_addr.getOffset())}, "
                 f"{format_address(end_addr.getOffset())}) to function at "
                 f"{format_address(func.getEntryPoint().getOffset())}: {e}",
                 error_type="AppendFailed",
             ) from e
 
-        return AppendFunctionTailResult(
+        return AddFunctionRangeResult(
             function=format_address(func.getEntryPoint().getOffset()),
-            tail_start=format_address(start_addr.getOffset()),
-            tail_end=format_address(end_addr.getOffset()),
+            range_start=format_address(start_addr.getOffset()),
+            range_end=format_address(end_addr.getOffset()),
         )
 
     @mcp.tool(annotations=ANNO_DESTRUCTIVE, tags={"functions"})
     @session.require_open
     def remove_function_range(
         function_address: Address,
-        tail_address: Address,
-    ) -> RemoveFunctionTailResult:
-        """Detach the body range that contains tail_address from its function.
+        range_address: Address,
+    ) -> RemoveFunctionRangeResult:
+        """Detach the body range that contains range_address from its function.
 
         Any address inside the range selects it; the range holding the entry point
         cannot be removed. Inverse of add_function_range. Returns function (entry
-        address), removed_tail_start and removed_tail_end (exclusive).
+        address), removed_range_start and removed_range_end (exclusive).
         """
         from ghidra.program.model.address import AddressSet  # noqa: PLC0415
 
         func = resolve_function(function_address)
-        tail_addr = resolve_address(tail_address)
+        range_addr = resolve_address(range_address)
         entry = func.getEntryPoint()
 
-        # Find the range containing tail_address
+        # Find the range containing range_address
         body = func.getBody()
         target_range = None
         ranges = body.iterator()
         while ranges.hasNext():
             addr_range = ranges.next()
-            if addr_range.contains(tail_addr):
+            if addr_range.contains(range_addr):
                 target_range = addr_range
                 break
 
         if target_range is None:
             raise GhidraError(
-                f"Address {format_address(tail_addr.getOffset())} is not in "
+                f"Address {format_address(range_addr.getOffset())} is not in "
                 f"function {func.getName()}",
                 error_type="NotFound",
             )
@@ -188,7 +188,7 @@ def register(mcp: FastMCP) -> None:
         range_start = target_range.getMinAddress()
         range_end_exclusive = target_range.getMaxAddress().getOffset() + 1
 
-        tx_id = program.startTransaction("Remove function tail")
+        tx_id = program.startTransaction("Remove function range")
         try:
             new_body = AddressSet(body)
             new_body.deleteRange(target_range.getMinAddress(), target_range.getMaxAddress())
@@ -200,13 +200,13 @@ def register(mcp: FastMCP) -> None:
         except Exception as e:
             program.endTransaction(tx_id, False)
             raise GhidraError(
-                f"Failed to remove tail at {format_address(tail_addr.getOffset())} "
+                f"Failed to remove range at {format_address(range_addr.getOffset())} "
                 f"from function at {format_address(entry.getOffset())}: {e}",
                 error_type="RemoveFailed",
             ) from e
 
-        return RemoveFunctionTailResult(
+        return RemoveFunctionRangeResult(
             function=format_address(entry.getOffset()),
-            removed_tail_start=format_address(range_start.getOffset()),
-            removed_tail_end=format_address(range_end_exclusive),
+            removed_range_start=format_address(range_start.getOffset()),
+            removed_range_end=format_address(range_end_exclusive),
         )

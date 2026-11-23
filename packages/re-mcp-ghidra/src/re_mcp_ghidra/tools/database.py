@@ -23,7 +23,7 @@ class OpenDatabaseResult(BaseModel):
     bitness: int = Field(description="Address size in bits.")
     file_type: str = Field(description="File format.")
     function_count: int = Field(description="Number of functions.")
-    segment_count: int = Field(description="Number of memory segments.")
+    memory_block_count: int = Field(description="Number of memory memory_blocks.")
     capabilities: dict[str, bool] = Field(description="Available capabilities.")
     warnings: list[str] = Field(default_factory=list, description="Any warnings.")
 
@@ -39,7 +39,7 @@ class DatabaseInfoResult(BaseModel):
     max_address: str = Field(description="Maximum address (hex).")
     image_base: str = Field(description="Image base address (hex).")
     function_count: int = Field(description="Number of functions.")
-    segment_count: int = Field(description="Number of memory blocks.")
+    memory_block_count: int = Field(description="Number of memory blocks.")
     entry_point_count: int = Field(description="Number of entry points.")
     capabilities: dict[str, bool] = Field(description="Available capabilities.")
 
@@ -84,7 +84,7 @@ def register(mcp: FastMCP) -> None:
             bitness=lang.getLanguageDescription().getSize(),
             file_type=program.getExecutableFormat() or "unknown",
             function_count=program.getFunctionManager().getFunctionCount(),
-            segment_count=len(list(mem.getBlocks())),
+            memory_block_count=len(list(mem.getBlocks())),
             capabilities=session.capabilities,
             warnings=result.get("warnings", []),
         )
@@ -102,7 +102,7 @@ def register(mcp: FastMCP) -> None:
 
         Use first on a newly opened database to orient. Returns {file_path,
         file_type, processor, compiler_spec, bitness, endian, min_address,
-        max_address, image_base, function_count, segment_count,
+        max_address, image_base, function_count, memory_block_count,
         entry_point_count, capabilities}.
         """
         program = session.program
@@ -128,7 +128,7 @@ def register(mcp: FastMCP) -> None:
             max_address=format_address(max_addr.getOffset()) if max_addr else "0x0",
             image_base=format_address(program.getImageBase().getOffset()),
             function_count=func_mgr.getFunctionCount(),
-            segment_count=len(blocks),
+            memory_block_count=len(blocks),
             entry_point_count=entry_count,
             capabilities=session.capabilities,
         )

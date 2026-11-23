@@ -2,7 +2,7 @@
 #
 # SPDX-License-Identifier: MIT OR Apache-2.0
 
-"""Function ID and data type archive tools (Ghidra equivalents of FLIRT/TIL)."""
+"""Function ID and data type archive tools."""
 
 from __future__ import annotations
 
@@ -52,7 +52,7 @@ def register(mcp: FastMCP) -> None:
     ) -> ApplyFunctionIdResult:
         """Match functions against Ghidra Function ID (FID) databases to name library code.
 
-        Ghidra's counterpart of IDA FLIRT signatures. Fails with NotAvailable when the
+        Names known library functions by hash. Fails with NotAvailable when the
         FID plugin or a FID database for the program's language is missing. Returns
         status "applied" and fid_name; it does not report how many functions matched.
         """
@@ -109,8 +109,7 @@ def register(mcp: FastMCP) -> None:
     def list_data_type_archives() -> ListDataTypeArchivesResult:
         """List data type archives (.gdt) available in the program's type manager.
 
-        Data type archives in Ghidra are similar to IDA's type libraries
-        (TILs). They provide pre-defined type information for OS APIs,
+        Data type archives provide pre-defined type information for OS APIs,
         SDKs, and common libraries.
         """
         program = session.program

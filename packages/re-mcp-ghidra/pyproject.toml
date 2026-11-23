@@ -24,10 +24,10 @@ dependencies = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/jtsylve/ida-mcp"
-Repository = "https://github.com/jtsylve/ida-mcp"
-Issues = "https://github.com/jtsylve/ida-mcp/issues"
-Documentation = "https://github.com/jtsylve/ida-mcp/tree/main/docs"
+Homepage = "https://github.com/coffeegrind123/ghidra-mcp-next"
+Repository = "https://github.com/coffeegrind123/ghidra-mcp-next"
+Issues = "https://github.com/coffeegrind123/ghidra-mcp-next/issues"
+Documentation = "https://github.com/coffeegrind123/ghidra-mcp-next/tree/main/docs"
 
 [project.scripts]
 re-mcp-ghidra = "re_mcp_ghidra._cli:main"

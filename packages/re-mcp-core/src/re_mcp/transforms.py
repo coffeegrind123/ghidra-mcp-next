@@ -767,7 +767,7 @@ class ToolTransform(CatalogTransform):
         return Tool.from_function(fn=get_schema, name="get_schema")
 
     # ------------------------------------------------------------------
-    # execute — sandboxed Python with invoke for chaining
+    # execute — forwards to the worker's _execute (Python against the Ghidra API)
     # ------------------------------------------------------------------
 
     def _get_execute_tool(self) -> Tool:

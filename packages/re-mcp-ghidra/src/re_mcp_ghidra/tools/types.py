@@ -40,7 +40,7 @@ class SetTypeResult(BaseModel):
     status: str
 
 
-class LocalTypeItem(BaseModel):
+class DataTypeItem(BaseModel):
     name: str
     category: str = ""
     size: int
@@ -179,7 +179,7 @@ def register(mcp: FastMCP) -> None:
                     kind = "function"
 
                 cat = dt.getCategoryPath()
-                yield LocalTypeItem(
+                yield DataTypeItem(
                     name=name,
                     category=str(cat) if cat else "",
                     size=dt.getLength(),

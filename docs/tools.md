@@ -55,7 +55,7 @@ signature and documentation.
 
 | Tool | Listed | What it does |
 |---|---|---|
-| `list_memory_blocks` |  | List all memory segments/blocks. |
+| `list_memory_blocks` |  | List all memory memory_blocks/blocks. |
 | `read_bytes` |  | Read raw bytes from program memory starting at an address. |
 
 ## database
@@ -109,9 +109,9 @@ signature and documentation.
 | `get_function` | yes | Describe the function containing an address: bounds, signature and flags. |
 | `get_function_prototype` |  | Get the full type signature (prototype) of a function. |
 | `get_stack_frame` |  | Show the listing stack-frame layout of the function containing an address. |
-| `list_function_ranges` |  | List all address ranges (chunks) in a function body. |
+| `list_function_ranges` |  | List all address ranges (ranges) in a function body. |
 | `list_functions` | yes | List all functions in the database, paginated with optional regex filter. |
-| `remove_function_range` |  | Detach the body range that contains tail_address from its function. |
+| `remove_function_range` |  | Detach the body range that contains range_address from its function. |
 | `rename_function` |  | Rename the function containing an address. |
 | `set_function_calling_convention` |  | Change only the calling convention of the function containing an address. |
 | `set_function_flags` |  | Set or clear noreturn, inline and library flags on the function containing an address. |
@@ -135,6 +135,16 @@ signature and documentation.
 | `save_database` | yes | Write the program's changes to its Ghidra project on disk. |
 | `wait_for_analysis` | yes | Block until a database has finished opening (and auto-analysis, if asked). |
 
+## memory_blocks
+
+| Tool | Listed | What it does |
+|---|---|---|
+| `create_memory_block` |  | Create a new zero-filled, initialized memory block from start_address to end_address. |
+| `delete_memory_block` |  | Delete the whole memory block containing an address, along with its bytes. |
+| `rename_memory_block` |  | Rename the memory block (memory_block) containing an address. |
+| `set_image_base` |  | Move the whole program by shifting its image base by a signed delta. |
+| `set_memory_block_permissions` |  | Replace the read/write/execute flags of the memory block containing an address. |
+
 ## metadata
 
 | Tool | Listed | What it does |
@@ -154,7 +164,7 @@ signature and documentation.
 
 | Tool | Listed | What it does |
 |---|---|---|
-| `clear_code_units` |  | Undefine code and data over a byte range, leaving the byte values unchanged. |
+| `clear_code_units` |  | Clear code and data over a byte range, leaving the byte values unchanged. |
 | `create_array` |  | Define an array of unsigned integer elements (1/2/4/8 bytes each) at an address. |
 | `create_data` |  | Define a primitive numeric data item (or array of them) at an address. |
 | `create_function` |  | Define a function whose entry is the given address; Ghidra derives its body. |
@@ -193,16 +203,6 @@ signature and documentation.
 | `list_strings` | yes | List defined string data items, optionally filtered by a case-insensitive regex. |
 | `search_bytes` |  | Find occurrences of an exact byte sequence in program memory. |
 | `search_text` |  | Search the disassembly text of every instruction for a regex. |
-
-## segments
-
-| Tool | Listed | What it does |
-|---|---|---|
-| `create_memory_block` |  | Create a new zero-filled, initialized memory block from start_address to end_address. |
-| `delete_memory_block` |  | Delete the whole memory block containing an address, along with its bytes. |
-| `rename_memory_block` |  | Rename the memory block (segment) containing an address. |
-| `set_image_base` |  | Rebase the whole program by moving its image base by a signed delta. |
-| `set_memory_block_permissions` |  | Replace the read/write/execute flags of the memory block containing an address. |
 
 ## signatures
 

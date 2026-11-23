@@ -31,7 +31,7 @@ Pre-commit hooks run REUSE compliance checks, ruff lint (with `--fix --exit-non-
 
 See `docs/architecture.md` for full details. The project is a monorepo with two packages:
 
-- **`re-mcp-core`** (`packages/re-mcp-core/src/re_mcp/`): generic MCP supervisor infrastructure — `supervisor.py`, `daemon.py`, `proxy.py`, `worker_provider.py`, `backend.py`, `server.py`, `context.py`, `exceptions.py`, `helpers.py`, `models.py`, `sandbox.py`, `transforms.py`, `_process.py`
+- **`re-mcp-core`** (`packages/re-mcp-core/src/re_mcp/`): generic MCP supervisor infrastructure — `supervisor.py`, `daemon.py`, `proxy.py`, `worker_provider.py`, `backend.py`, `server.py`, `context.py`, `exceptions.py`, `helpers.py`, `models.py`, `transforms.py`, `_process.py`
 - **`re-mcp-ghidra`** (`packages/re-mcp-ghidra/src/re_mcp_ghidra/`): Ghidra-specific backend — `backend.py`, `server.py`, `session.py`, `helpers.py`, `exceptions.py`, `models.py`, `transforms.py`, `_cli.py`, `tools/`, `resources.py`, `prompts/`
 
 Key points for editing:

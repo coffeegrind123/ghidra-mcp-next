@@ -2,7 +2,7 @@
 #
 # SPDX-License-Identifier: MIT OR Apache-2.0
 
-"""Memory block (segment) management tools."""
+"""Memory block (memory_block) management tools."""
 
 from __future__ import annotations
 
@@ -27,7 +27,7 @@ from re_mcp_ghidra.session import session
 # ---------------------------------------------------------------------------
 
 
-class CreateSegmentResult(BaseModel):
+class CreateMemoryBlockResult(BaseModel):
     """Result of creating a memory block."""
 
     name: str = Field(description="Block name.")
@@ -37,7 +37,7 @@ class CreateSegmentResult(BaseModel):
     status: str = Field(description="Status.")
 
 
-class DeleteSegmentResult(BaseModel):
+class DeleteMemoryBlockResult(BaseModel):
     """Result of deleting a memory block."""
 
     name: str = Field(description="Block name.")
@@ -47,7 +47,7 @@ class DeleteSegmentResult(BaseModel):
     status: str = Field(description="Status.")
 
 
-class SetSegmentNameResult(BaseModel):
+class RenameMemoryBlockResult(BaseModel):
     """Result of renaming a memory block."""
 
     old_name: str = Field(description="Previous block name.")
@@ -55,7 +55,7 @@ class SetSegmentNameResult(BaseModel):
     status: str = Field(description="Status.")
 
 
-class SetSegmentPermissionsResult(BaseModel):
+class SetMemoryBlockPermissionsResult(BaseModel):
     """Result of changing memory block permissions."""
 
     name: str = Field(description="Block name.")
@@ -90,7 +90,7 @@ def _resolve_block(addr):
 
 
 def register(mcp: FastMCP) -> None:
-    @mcp.tool(annotations=ANNO_MUTATE, tags={"segments"})
+    @mcp.tool(annotations=ANNO_MUTATE, tags={"memory_blocks"})
     @session.require_open
     def create_memory_block(
         name: Annotated[str, Field(description="Name for the new block. Example: '.mydata'")],
@@ -103,7 +103,7 @@ def register(mcp: FastMCP) -> None:
                 "(case-insensitive, short strings are padded with '-'). Example: 'R-X'"
             ),
         ] = "RW-",
-    ) -> CreateSegmentResult:
+    ) -> CreateMemoryBlockResult:
         """Create a new zero-filled, initialized memory block from start_address to end_address.
 
         end_address is exclusive and must be greater than start_address. Use
@@ -144,7 +144,7 @@ def register(mcp: FastMCP) -> None:
                 f"Failed to create memory block: {e}", error_type="CreateFailed"
             ) from e
 
-        return CreateSegmentResult(
+        return CreateMemoryBlockResult(
             name=name,
             start=format_address(start_offset),
             end=format_address(end_offset),
@@ -152,11 +152,11 @@ def register(mcp: FastMCP) -> None:
             status="created",
         )
 
-    @mcp.tool(annotations=ANNO_DESTRUCTIVE, tags={"segments"})
+    @mcp.tool(annotations=ANNO_DESTRUCTIVE, tags={"memory_blocks"})
     @session.require_open
     def delete_memory_block(
         address: Address,
-    ) -> DeleteSegmentResult:
+    ) -> DeleteMemoryBlockResult:
         """Delete the whole memory block containing an address, along with its bytes.
 
         Any address inside the block selects it; fails with NotFound when none does.
@@ -185,7 +185,7 @@ def register(mcp: FastMCP) -> None:
                 f"Failed to delete memory block: {e}", error_type="DeleteFailed"
             ) from e
 
-        return DeleteSegmentResult(
+        return DeleteMemoryBlockResult(
             name=name,
             start=start,
             end=end,
@@ -193,15 +193,15 @@ def register(mcp: FastMCP) -> None:
             status="deleted",
         )
 
-    @mcp.tool(annotations=ANNO_MUTATE, tags={"segments"})
+    @mcp.tool(annotations=ANNO_MUTATE, tags={"memory_blocks"})
     @session.require_open
     def rename_memory_block(
         address: Address,
         new_name: Annotated[
             str, Field(description="New name for the block. Example: '.rdata_decrypted'")
         ],
-    ) -> SetSegmentNameResult:
-        """Rename the memory block (segment) containing an address.
+    ) -> RenameMemoryBlockResult:
+        """Rename the memory block (memory_block) containing an address.
 
         Any address inside the block selects it. Only the name changes; use
         set_memory_block_permissions for R/W/X. Returns old_name, new_name and status
@@ -223,9 +223,9 @@ def register(mcp: FastMCP) -> None:
                 f"Failed to rename memory block: {e}", error_type="RenameFailed"
             ) from e
 
-        return SetSegmentNameResult(old_name=old_name, new_name=new_name, status="renamed")
+        return RenameMemoryBlockResult(old_name=old_name, new_name=new_name, status="renamed")
 
-    @mcp.tool(annotations=ANNO_MUTATE, tags={"segments"})
+    @mcp.tool(annotations=ANNO_MUTATE, tags={"memory_blocks"})
     @session.require_open
     def set_memory_block_permissions(
         address: Address,
@@ -236,7 +236,7 @@ def register(mcp: FastMCP) -> None:
                 "(case-insensitive, short strings are padded with '-'). Example: 'R-X'"
             ),
         ],
-    ) -> SetSegmentPermissionsResult:
+    ) -> SetMemoryBlockPermissionsResult:
         """Replace the read/write/execute flags of the memory block containing an address.
 
         Any address inside the block selects it. Returns the block name,
@@ -259,7 +259,7 @@ def register(mcp: FastMCP) -> None:
             program.endTransaction(tx_id, False)
             raise GhidraError(f"Failed to set permissions: {e}", error_type="UpdateFailed") from e
 
-        return SetSegmentPermissionsResult(
+        return SetMemoryBlockPermissionsResult(
             name=block.getName(),
             old_permissions=old_permissions,
             permissions=permissions,

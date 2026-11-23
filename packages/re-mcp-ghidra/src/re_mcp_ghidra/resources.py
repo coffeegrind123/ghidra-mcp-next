@@ -185,7 +185,7 @@ def register(mcp: FastMCP):
 
     @mcp.resource(
         "ghidra://db/statistics",
-        description="Summary counts: functions, strings, segments, names, coverage",
+        description="Summary counts: functions, strings, memory blocks, names, coverage",
         mime_type="application/json",
         annotations=ANNO_RESOURCE,
         tags={"browsable"},
@@ -224,7 +224,7 @@ def register(mcp: FastMCP):
         return _json(
             {
                 "function_count": func_count,
-                "segment_count": seg_count,
+                "memory_block_count": seg_count,
                 "entry_point_count": entry_count,
                 "name_count": name_count,
                 "code_coverage_percent": coverage_pct,
