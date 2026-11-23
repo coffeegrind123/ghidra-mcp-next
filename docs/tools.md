@@ -254,12 +254,19 @@ signature and documentation.
 | Tool | Listed | What it does |
 |---|---|---|
 | `apply_type_at_address` |  | Define data of an existing named type at an address, clearing code units it overlaps. |
+| `clone_data_type` |  | Make an independent copy of a data type under a new name. |
+| `consolidate_data_types` |  | Merge duplicate data types into one: every use moves to keep, duplicates go. |
+| `create_data_type_category` |  | Create a data type category, with any missing parents. |
 | `delete_data_type` |  | Delete any data type by exact name from the program's data type manager. |
+| `find_data_type_uses` |  | Find where a data type (or one of its fields) is used in decompiled code. |
 | `get_data_type` |  | Get detailed type information including members by name. |
 | `get_type_info` |  | Report what type is applied at an address: a function's prototype or a data item's type. |
+| `list_data_type_categories` |  | List the program's data type categories (folders of types). |
 | `list_data_types` |  | List locally defined data types. |
+| `move_data_type` |  | Move a data type into a category (created if missing). |
 | `parse_c_source` |  | Parse C declarations (a whole header) and add every type they declare. |
 | `parse_type_declaration` |  | Parse one C type declaration and add the resulting type to the program. |
+| `rename_data_type` |  | Rename a struct, union, enum, typedef or function definition. |
 | `set_type` |  | Define data of a C-style type at an address, clearing code units it overlaps. |
 
 ## utility

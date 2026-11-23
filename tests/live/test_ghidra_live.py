@@ -182,6 +182,7 @@ async def _scenario(binary: Path) -> dict[str, Any]:
             name: await rec.tool("get_data_type", name=name)
             for name in ("hdr_a_t", "hdr_b_t", "hdr_id_t")
         }
+        out["types"] = await _type_cases(rec, db, exclude={first["start"], second["start"]})
         out["low"] = await _low_level_cases(rec, db, exclude={first["start"], second["start"]})
         out["regvalue"] = await _register_value_cases(
             rec, db, exclude={first["start"], second["start"]}
@@ -258,6 +259,47 @@ async def _register_value_cases(rec: Recorder, db: str, exclude: set[str]) -> di
     return results
 
 
+async def _type_cases(rec: Recorder, db: str, exclude: set[str]) -> dict[str, Any]:
+    out: dict[str, Any] = {}
+    out["category"] = await rec.tool("create_data_type_category", path="/net/hdr")
+    out["moved"] = await rec.tool("move_data_type", type_path="/hdr_a", category="/net/hdr")
+    out["renamed"] = await rec.tool(
+        "rename_data_type", type_path="/net/hdr/hdr_a", new_name="hdr_alpha"
+    )
+    out["cloned"] = await rec.tool(
+        "clone_data_type", type_path="/net/hdr/hdr_alpha", new_name="hdr_alpha_copy"
+    )
+    out["clone_again"] = await rec.tool(
+        "clone_data_type", type_path="/net/hdr/hdr_alpha", new_name="hdr_alpha_copy"
+    )
+    out["merged"] = await rec.tool(
+        "consolidate_data_types", keep="/net/hdr/hdr_alpha", replace=["/net/hdr/hdr_alpha_copy"]
+    )
+    out["copy_gone"] = await rec.tool("get_data_type", name="hdr_alpha_copy")
+    out["categories"] = await rec.tool("list_data_type_categories")
+    found = await rec(
+        "execute",
+        database=db,
+        read_only=True,
+        code=(
+            f"exclude = set({sorted(e.lower() for e in exclude)!r})\n"
+            "for f in program.getFunctionManager().getFunctions(True):\n"
+            "    entry = '0x' + str(f.getEntryPoint()).lstrip('0')\n"
+            "    if f.getName().startswith('FUN_') and entry.lower() not in exclude:\n"
+            "        return entry"
+        ),
+    )
+    target = found["result"]
+    await rec.tool(
+        "set_function_prototype",
+        address=target,
+        type_string="int f(hdr_alpha *p)",
+    )
+    out["uses"] = await rec.tool("find_data_type_uses", type_path="/net/hdr/hdr_alpha")
+    out["uses_target"] = target
+    return out
+
+
 async def _low_level_cases(rec: Recorder, db: str, exclude: set[str]) -> dict[str, Any]:
     out: dict[str, Any] = {}
     out["analyzers"] = await rec.tool("list_analyzers")
@@ -282,7 +324,7 @@ async def _low_level_cases(rec: Recorder, db: str, exclude: set[str]) -> dict[st
         database=db,
         read_only=True,
         code=(
-            "exclude = set(%r)\n"
+            f"exclude = set({sorted(e.lower() for e in exclude)!r})\n"
             "call = target = None\n"
             "for f in program.getFunctionManager().getFunctions(True):\n"
             "    entry = '0x' + str(f.getEntryPoint()).lstrip('0')\n"
@@ -296,8 +338,7 @@ async def _low_level_cases(rec: Recorder, db: str, exclude: set[str]) -> dict[st
             "    if call and target:\n"
             "        break\n"
             "return {'call': call, 'target': target}"
-        )
-        % sorted(e.lower() for e in exclude),
+        ),
     )
     call, target = found["result"]["call"], found["result"]["target"]
     out["flow_set"] = await rec.tool("set_flow_override", address=call, override="CALL_RETURN")
@@ -473,6 +514,27 @@ def test_find_register_value(run, case):
         assert got["found"] is True, got
         assert got["value"].lower() == expected
         assert got["source_address"], got
+
+
+def test_type_categories_rename_clone_merge(run):
+    t = run["types"]
+    for key in ("category", "moved", "renamed", "cloned", "merged", "categories", "uses"):
+        assert t[key]["is_error"] is False, (key, t[key])
+    assert t["moved"]["path"] == "/net/hdr/hdr_a"
+    assert t["renamed"]["path"] == "/net/hdr/hdr_alpha"
+    assert t["cloned"]["path"] == "/net/hdr/hdr_alpha_copy"
+    assert t["clone_again"]["error_type"] == "AlreadyExists"
+    assert [r["path"] for r in t["merged"]["replaced"]] == ["/net/hdr/hdr_alpha_copy"]
+    assert t["copy_gone"]["is_error"] is True
+    assert "/net/hdr" in [c["path"] for c in t["categories"]["items"]]
+
+
+def test_find_data_type_uses(run):
+    uses = run["types"]["uses"]
+    assert uses["timed_out"] is False
+    assert run["types"]["uses_target"].lower() in [
+        u["function_address"].lower() for u in uses["items"]
+    ], uses
 
 
 def test_list_and_configure_analyzers(run):
