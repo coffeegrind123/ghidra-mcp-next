@@ -177,6 +177,11 @@ async def _scenario(binary: Path) -> dict[str, Any]:
 
         out["scores"] = await rec.tool("score_documentation", include_locals=True, limit=5)
         out["rerun"] = await rec.tool("run_auto_analysis")
+        out["c_source"] = await rec.tool("parse_c_source", source=MULTI_DECL_HEADER)
+        out["c_source_types"] = {
+            name: await rec.tool("get_data_type", name=name)
+            for name in ("hdr_a_t", "hdr_b_t", "hdr_id_t")
+        }
         out["regvalue"] = await _register_value_cases(
             rec, db, exclude={first["start"], second["start"]}
         )
@@ -193,6 +198,14 @@ async def _scenario(binary: Path) -> dict[str, Any]:
         await rec("wait_for_analysis", database=rec.database)
         out["persisted"] = await rec.tool("get_function", address=second["start"])
     return out
+
+
+# Three declarations in one header: every one must land in the program.
+MULTI_DECL_HEADER = """
+typedef struct hdr_a { int x; int y; } hdr_a_t;
+typedef struct hdr_b { hdr_a_t a; char tag[8]; } hdr_b_t;
+typedef unsigned int hdr_id_t;
+"""
 
 
 # find_register_value cases, as x86-64 machine code patched over function entries:
@@ -368,6 +381,14 @@ def test_documentation_scores_worst_first(run):
 
 def test_auto_analysis_reruns(run):
     assert run["rerun"]["functions_after"] >= run["rerun"]["functions_before"] > 0
+
+
+@pytest.mark.parametrize("name", ["hdr_a_t", "hdr_b_t", "hdr_id_t"])
+def test_parse_c_source_keeps_every_declaration(run, name):
+    assert run["c_source"]["is_error"] is False, run["c_source"]
+    assert name in run["c_source"]["types"], run["c_source"]
+    got = run["c_source_types"][name]
+    assert got["is_error"] is False, got
 
 
 @pytest.mark.parametrize("case", sorted(REGISTER_CASES))

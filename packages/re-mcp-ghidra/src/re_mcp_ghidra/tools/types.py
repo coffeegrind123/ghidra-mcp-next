@@ -52,6 +52,7 @@ class ParseTypeResult(BaseModel):
     size: int
     kind: str
     status: str
+    types: list[str] = Field(description="Every type the declaration added (nested ones too).")
 
 
 class ApplyTypeResult(BaseModel):
@@ -206,45 +207,17 @@ def register(mcp: FastMCP) -> None:
         reports typedef as a kind. Returns type_name, size, kind (struct, union, enum or
         other) and status "parsed".
         """
-        from ghidra.app.util.cparser.C import CParser  # noqa: PLC0415
+        from re_mcp_ghidra.tools.c_source import kind_of, parse_c_declarations  # noqa: PLC0415
 
-        program = session.program
-        dtm = program.getDataTypeManager()
-
-        tx_id = program.startTransaction("Parse type declaration")
-        try:
-            parser = CParser(dtm)
-            dt = parser.parse(declaration)
-            if dt is None:
-                program.endTransaction(tx_id, False)
-                raise GhidraError(
-                    f"Failed to parse declaration: {declaration!r}",
-                    error_type="ParseError",
-                )
-            dtm.addDataType(dt, None)
-            program.endTransaction(tx_id, True)
-
-            kind = "other"
-            from ghidra.program.model.data import Enum, Structure, Union  # noqa: PLC0415
-
-            if isinstance(dt, Structure):
-                kind = "struct"
-            elif isinstance(dt, Union):
-                kind = "union"
-            elif isinstance(dt, Enum):
-                kind = "enum"
-
-            return ParseTypeResult(
-                type_name=dt.getName(),
-                size=dt.getLength(),
-                kind=kind,
-                status="parsed",
-            )
-        except GhidraError:
-            raise
-        except Exception as e:
-            program.endTransaction(tx_id, False)
-            raise GhidraError(f"Failed to parse declaration: {e}", error_type="ParseError") from e
+        dt, names = parse_c_declarations(declaration)
+        kind = kind_of(dt)
+        return ParseTypeResult(
+            type_name=str(dt.getName()),
+            size=int(dt.getLength()),
+            kind=kind if kind != "typedef" else "other",
+            status="parsed",
+            types=names,
+        )
 
     @mcp.tool(annotations=ANNO_MUTATE, tags={"types"})
     @session.require_open
