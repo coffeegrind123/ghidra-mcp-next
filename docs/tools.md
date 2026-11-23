@@ -153,6 +153,7 @@ signature and documentation.
 | `create_repository` |  | Create a repository on a Ghidra Server; the configured user becomes its admin. |
 | `diff_functions_across` |  | Diff a function in one database against one in another. |
 | `diff_programs` |  | Summarise what changed between two builds, function by function. |
+| `diff_strings` |  | List strings (or defined data) added or removed between two builds. |
 | `execute` | yes | Run Python 3 against the open program, in ONE transaction. |
 | `list_databases` | yes | List the databases open in this server. |
 | `list_project_files` | yes | List the folders and files stored in an existing Ghidra project. |

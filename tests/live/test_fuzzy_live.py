@@ -42,6 +42,15 @@ for f in program.getFunctionManager().getFunctions(True):
 """
 
 
+FIND_STRING = """
+for d in program.getListing().getDefinedData(True):
+    if d.hasStringValue():
+        v = str(d.getValue())
+        if len(v) >= 4 and v.isascii() and v.isalpha():
+            return {"address": hex(d.getAddress().getOffset()), "value": v}
+"""
+
+
 async def _scenario(work: Path) -> dict[str, Any]:
     supervisor = Path(sys.executable).with_name("re-mcp-ghidra")
     env = {**os.environ, "GHIDRA_INSTALL_DIR": GHIDRA}
@@ -125,6 +134,31 @@ async def _scenario(work: Path) -> dict[str, Any]:
             include_body_bytes=True,
             limit=5000,
         )
+        out["strings_same"] = await call("diff_strings", source_database=src, target_database=dst)
+        out["data_same"] = await call(
+            "diff_strings", source_database=src, target_database=dst, what="data"
+        )
+        # Change the first letter of one defined string in the target.
+        string = await call("execute", database=dst, read_only=True, code=FIND_STRING)
+        assert string and not string.get("is_error"), string
+        out["string"] = string
+        first = "Y" if string["value"][0] == "Z" else "Z"
+        out["string_patch"] = await call(
+            "batch",
+            database=dst,
+            label="change one string",
+            ops=[
+                {
+                    "tool": "patch_bytes",
+                    "params": {"address": string["address"], "hex_bytes": f"{ord(first):02x}"},
+                },
+                {"tool": "create_string", "params": {"address": string["address"]}},
+            ],
+        )
+        out["new_string"] = first + string["value"][1:]
+        out["strings_changed"] = await call(
+            "diff_strings", source_database=src, target_database=dst
+        )
         out["propagated"] = await call(
             "propagate_documentation",
             source_database=src,
@@ -206,3 +240,15 @@ def test_diff_programs_finds_the_patched_function(run):
         assert kinds <= set(by_target[target]["change_types"])
         # Both databases come from the same file: only the patched function differs.
         assert result["matched"]["changed"] == 1, result["changes"]
+
+
+def test_diff_strings(run):
+    for key in ("strings_same", "data_same"):
+        same = run[key]
+        assert not same.get("is_error"), same
+        assert same["added"] == [] and same["removed"] == [] and same["source_total"] > 0
+    changed = run["strings_changed"]
+    assert run["string_patch"].get("is_error") is not True, run["string_patch"]
+    assert {"value": run["new_string"], "count": 1} in changed["added"]
+    assert {"value": run["string"]["value"], "count": 1} in changed["removed"]
+    assert changed["added_total"] == 1 and changed["removed_total"] == 1

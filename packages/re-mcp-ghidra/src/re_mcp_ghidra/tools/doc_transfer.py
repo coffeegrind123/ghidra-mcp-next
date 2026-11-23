@@ -87,6 +87,9 @@ class ApplyReport(BaseModel):
     )
 
 
+MAX_DATA_REPR = 200
+
+
 def _is_default(func) -> bool:
     from ghidra.program.model.symbol import SourceType  # noqa: PLC0415
 
@@ -568,6 +571,35 @@ def register(mcp: FastMCP) -> None:
                     fact["body"] = None
             items.append(fact)
         return {"items": items}
+
+    @mcp.tool(name="_defined_values", annotations=ANNO_READ_ONLY, tags={"internal"})
+    @session.require_open
+    def defined_values(what: str = "strings") -> dict:
+        """Internal: every defined string, or every other defined datum, as text (diff_strings).
+
+        Data reads "type=value"; a pointer's value is its target's name when
+        someone named it, else "ptr", so relinking does not change it.
+        """
+        from ghidra.program.model.symbol import SourceType  # noqa: PLC0415
+
+        program = session.program
+        table = program.getSymbolTable()
+        values = []
+        for data in program.getListing().getDefinedData(True):
+            if data.hasStringValue() != (what == "strings"):
+                continue
+            if what == "strings":
+                values.append(str(data.getValue()))
+                continue
+            if data.isPointer():
+                target = data.getValue()
+                sym = table.getPrimarySymbol(target) if target is not None else None
+                named = sym is not None and sym.getSource() != SourceType.DEFAULT
+                shown = str(sym.getName(True)) if named else "ptr"
+            else:
+                shown = str(data.getDefaultValueRepresentation())[:MAX_DATA_REPR]
+            values.append(f"{data.getDataType().getName()}={shown}")
+        return {"values": values}
 
     @mcp.tool(name="_export_types", annotations=ANNO_READ_ONLY, tags={"internal"})
     @session.require_open

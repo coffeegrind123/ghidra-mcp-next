@@ -558,6 +558,51 @@ def register_matching_tools(mcp: FastMCP, pool: WorkerPoolProvider) -> None:
             "revision": result.get("revision"),
         }
 
+    @mcp.tool(annotations={"title": "Diff Strings", "readOnlyHint": True})
+    async def diff_strings(
+        source_database: Annotated[str, Field(description='The older build. Example: "app_v1"')],
+        target_database: Annotated[str, Field(description='The newer build. Example: "app_v2"')],
+        what: Annotated[
+            Literal["strings", "data"],
+            Field(
+                description=(
+                    "strings: defined string values; data: other defined data as "
+                    'type=value (pointers by target name). Example: "strings"'
+                )
+            ),
+        ] = "strings",
+        limit: Annotated[
+            int, Field(ge=1, le=5000, description="Most values per side. Example: 200")
+        ] = 200,
+    ) -> dict:
+        """List strings (or defined data) added or removed between two builds.
+
+        Use with diff_programs to spot new URLs, commands, error messages,
+        keys or protocol constants. Values are compared as a multiset,
+        ignoring addresses. Returns {what, source_total, target_total, added:
+        [{value, count}], removed: [{value, count}], added_total,
+        removed_total}; added and removed each hold at most limit values.
+        """
+        from collections import Counter  # noqa: PLC0415
+
+        a = Counter(
+            (await _call(pool, source_database, "_defined_values", {"what": what}))["values"]
+        )
+        b = Counter(
+            (await _call(pool, target_database, "_defined_values", {"what": what}))["values"]
+        )
+        added = sorted((b - a).items())
+        removed = sorted((a - b).items())
+        return {
+            "what": what,
+            "source_total": sum(a.values()),
+            "target_total": sum(b.values()),
+            "added": [{"value": v, "count": n} for v, n in added[:limit]],
+            "removed": [{"value": v, "count": n} for v, n in removed[:limit]],
+            "added_total": len(added),
+            "removed_total": len(removed),
+        }
+
     @mcp.tool(annotations={"title": "Diff Programs", "readOnlyHint": True})
     async def diff_programs(
         source_database: Annotated[str, Field(description='The older build. Example: "app_v1"')],
