@@ -38,3 +38,50 @@ debugger, emulation).
 Upstream flaws not to copy: CALL_EXT hash collisions and offset-based jump targets in
 the function hash, name-based callee matching in fuzzy match, many-to-one bulk matches,
 partial commits in merge, the stub find_dead_code, substring malware heuristics.
+
+## cyberkaida/reverse-engineering-assistant (ReVa)
+
+Read at 4bfae31a758639cab4d80704bc8884b508beacac (2026-11-17). Full spec:
+`context/handoff-reva-spec.md` (local only). **In progress.**
+
+Ported:
+
+| What | Commit |
+|---|---|
+| Import addresses lost their EXTERNAL space; get_xrefs_to on an import found nothing (bug found by comparison) | b50f76c |
+| Failed Python GhidraScripts committed their changes on 12.0/12.1 (bug found by comparison) | 399e07c |
+| decompile_function line numbers, per-line addresses, paging | e3ba0fb |
+| find_constant_uses (all operand objects), search_comments, find_function_candidates | 345c655 |
+| run_ghidra_script time limit with rollback, file-backed capped output | d2feb48 |
+| Not-found errors list close names; "code but no function" hint | b71a870 |
+
+Left (priority order): set_decompiler_comment(line=); dataflow stops typed and located,
+find_variable_accesses; vtable tools (needs ReVa's Apache-2.0 C++ test fixtures);
+get_call_graph direction/depth/cycle markers and find_common_callers; decompiled-level
+diff and a program change summary; list filters and import ordinals. MAYBE and SKIP lists
+in the spec.
+
+## cellebrite-labs/ghidra-rpc
+
+Read at fa3866243dcfcbc876baa7b13ae0deac2c443cd8 (0.3.0). Full spec:
+`context/handoff-ghidra-rpc-spec.md` (local only). README says MIT; no LICENSE file.
+**In progress.**
+
+Ported:
+
+| What | Commit |
+|---|---|
+| get_xrefs_to follows thunks (with the address-space fix) | b50f76c |
+| Ghidra 12.2 removed DataTypeManager.remove(dt, monitor); CI now tests 12.2 | ff45bce |
+| One shared decompiler per program with the program's options (~14x faster) | 44d238c |
+| search_decompiled with resume cursor and revision-keyed cache | 83065f2 |
+| Context registers, relocations, set_function_thunk | 345c655 |
+| decompile timeout_s | e3ba0fb |
+
+Found while testing 12.2 (not from either repo): Ghidra 12.2 clients reject a Ghidra
+Server's self-issued certificate; GHIDRA_MCP_SERVER_CACERTS / _TRUST_LOOPBACK (bf97d1c).
+
+Left: decompiler variable edits by storage with verified read-back; Version Tracking run
+inside the destination worker (source opened read-only from its saved project) and BSim
+as a fuzzy engine, both gated on the precision/recall measurement in the spec §3.5;
+MAYBE items in the spec.
