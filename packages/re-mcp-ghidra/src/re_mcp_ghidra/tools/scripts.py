@@ -21,6 +21,7 @@ from re_mcp_ghidra.session import session
 USER_SCRIPT_DIRS_ENV = "GHIDRA_MCP_SCRIPT_DIRS"
 DEFAULT_USER_SCRIPT_DIR = os.path.expanduser("~/ghidra_scripts")
 SCRIPT_EXTENSIONS = (".java", ".py")
+PY_TRACEBACK = "Traceback (most recent call last)"
 
 
 class ScriptResult(BaseModel):
@@ -166,6 +167,11 @@ def register(mcp: FastMCP) -> None:
             with _transaction(f"script {os.path.basename(path)}", keep=True) as tx:
                 try:
                     instance.execute(state, controls)
+                    # pyghidra (Ghidra 12.0/12.1) catches a Python script's exception
+                    # and prints the traceback instead of raising; treat that as the
+                    # failure it is, so the transaction rolls back.
+                    if path.endswith(".py") and PY_TRACEBACK in str(err):
+                        raise RuntimeError(str(err).strip().splitlines()[-1])
                 except Exception as exc:
                     raise GhidraError(
                         f"{os.path.basename(path)} failed: {exc}. Nothing was changed: the "

@@ -174,6 +174,12 @@ async def _scenario(binary: Path) -> dict[str, Any]:
         )
         out["after_java"] = await rec.tool("get_function", address=first["start"])
         out["python_script"] = await rec.tool("run_ghidra_script", script="count_funcs.py")
+        out["python_fail"] = await rec.tool(
+            "run_ghidra_script",
+            script="rename_then_fail.py",
+            args=[first["start"], "should_not_stick"],
+        )
+        out["after_python_fail"] = await rec.tool("get_function", address=first["start"])
 
         out["scores"] = await rec.tool("score_documentation", include_locals=True, limit=5)
         out["rerun"] = await rec.tool("run_auto_analysis")
@@ -558,6 +564,11 @@ def test_java_script_runs_as_one_step(run):
 def test_failing_script_rolls_back(run):
     assert run["java_fail"]["error_type"] == "ScriptError"
     assert run["after_java"]["name"] == "via_java"
+
+
+def test_failing_python_script_rolls_back(run):
+    assert run["python_fail"].get("error_type") == "ScriptError", run["python_fail"]
+    assert run["after_python_fail"]["name"] != "should_not_stick"
 
 
 def test_python_script_runs(run):
