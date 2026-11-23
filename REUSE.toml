@@ -23,3 +23,10 @@ SPDX-License-Identifier = "MIT OR Apache-2.0"
 path = ["context/**", ".mcpgraderc.json", "tests/live/scripts/**"]
 SPDX-FileCopyrightText = "© 2026 ghidra-mcp-next contributors"
 SPDX-License-Identifier = "MIT OR Apache-2.0"
+
+# Test binaries and their sources from cyberkaida/reverse-engineering-assistant
+# (ReVa) at 4bfae31a758639cab4d80704bc8884b508beacac, tests/fixtures/.
+[[annotations]]
+path = ["tests/live/fixtures/reva/**"]
+SPDX-FileCopyrightText = "© cyberkaida and reverse-engineering-assistant contributors"
+SPDX-License-Identifier = "Apache-2.0"

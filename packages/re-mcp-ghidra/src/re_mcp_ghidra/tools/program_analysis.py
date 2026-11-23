@@ -21,6 +21,7 @@ from re_mcp_ghidra.helpers import (
     FilterPattern,
     compile_filter,
     format_address,
+    format_location,
     resolve_address,
     resolve_function,
 )
@@ -119,17 +120,46 @@ class FlowStep(BaseModel):
     depth: int = Field(description="Steps from the starting value.")
 
 
+class VariableAccess(BaseModel):
+    address: str = Field(description="Instruction address.")
+    kind: str = Field(description="read or write.")
+    op: str = Field(description="Decompiler P-code operation.")
+
+
+class VariableAccesses(BaseModel):
+    function: str = Field(description="Function entry point.")
+    variable: str = Field(description="Variable name as the decompiler shows it.")
+    storage: str = Field(description="Where the variable lives (register, stack, address).")
+    data_type: str = Field(description="Decompiler data type.")
+    is_parameter: bool = Field(description="True for a parameter.")
+    accesses: list[VariableAccess] = Field(description="Reads and writes, by address.")
+    total: int = Field(description="Number of accesses.")
+
+
+class FlowStop(BaseModel):
+    kind: str = Field(
+        description=(
+            "backward: constant, parameter, input (register or stack value at entry that "
+            "is not a parameter), global, load (value read through a pointer; the pointer "
+            "is followed on), call_result, no_definition. forward: store, call_arg, "
+            "call_target, return, global (written to a global)."
+        )
+    )
+    address: str | None = Field(default=None, description="Operation where the branch ends.")
+    name: str | None = Field(default=None, description="Parameter, global or register name.")
+    slot: int | None = Field(default=None, description="Parameter or argument index (0-based).")
+    target: str | None = Field(
+        default=None, description='Called function name, its address, or "indirect".'
+    )
+    value: str | None = Field(default=None, description="Constant value (hex).")
+
+
 class DataflowResult(BaseModel):
     function: str = Field(description="Function entry point.")
     start: str = Field(description="The value followed (varnode text).")
     direction: str = Field(description="backward (definitions) or forward (uses).")
     steps: list[FlowStep] = Field(description="Operations reached, breadth first.")
-    stops: list[str] = Field(
-        description=(
-            "Why branches ended: constant, input (parameter/register at entry), call, "
-            "no_definition (a global or memory value not computed in this function)."
-        )
-    )
+    stops: list[FlowStop] = Field(description="Where and why each branch ended.")
     truncated: bool = Field(description="Stopped at max_steps.")
 
 
@@ -648,7 +678,8 @@ def register(mcp: FastMCP) -> None:
             Field(
                 description=(
                     "Register or decompiler variable used or set at address; empty takes "
-                    'the first value the instruction writes. Example: "RAX"'
+                    "the value the instruction writes, else its first non-constant input. "
+                    'Example: "RAX"'
                 )
             ),
         ] = "",
@@ -668,9 +699,13 @@ def register(mcp: FastMCP) -> None:
         """Follow a value through the decompiler's dataflow from one instruction.
 
         Use to answer "where does this argument come from" or "what is this
-        result used for" across the function. Backward stops at constants,
-        function inputs and call results; forward lists every use. Returns
-        {function, start, direction, steps: [{address, op, depth}], stops,
+        result used for" across the function. Backward ends at constants that
+        are the value itself (not operands like the 8 in p + 8), parameters
+        (name and slot), globals, call results (with the callee) and loads (the
+        pointer is followed on). Forward lists every use and ends at stores,
+        call arguments (callee and slot), returns and globals; a call's result
+        is not followed. Returns {function, start, direction, steps: [{address,
+        op, depth}], stops: [{kind, address, name, slot, target, value}],
         truncated}.
         """
         func = resolve_function(address)
@@ -687,6 +722,8 @@ def register(mcp: FastMCP) -> None:
                 if vn is None:
                     continue
                 if not variable:
+                    if vn.isConstant():
+                        continue
                     start_vn = vn
                     break
                 hv = vn.getHigh()
@@ -705,48 +742,83 @@ def register(mcp: FastMCP) -> None:
                 error_type="NotFound",
             )
 
-        steps: list[FlowStep] = []
-        stops: set[str] = set()
-        seen = set()
-        queue = deque([(start_vn, 0)])
-        while queue and len(steps) < max_steps:
-            vn, depth = queue.popleft()
-            if direction == "backward":
-                if vn.isConstant():
-                    stops.add("constant")
-                    continue
-                if vn.isInput():
-                    stops.add("input")
-                    continue
-                op = vn.getDef()
-                if op is None:
-                    # Not computed in this function: a global or memory value.
-                    stops.add("no_definition")
-                    continue
-                if op.getSeqnum() in seen:
-                    continue
-                seen.add(op.getSeqnum())
-                steps.append(_step(op, depth))
-                if op.getMnemonic() in ("CALL", "CALLIND"):
-                    stops.add("call")
-                    continue
-                for inp in op.getInputs():
-                    queue.append((inp, depth + 1))
-            else:
-                for op in vn.getDescendants():
-                    if op.getSeqnum() in seen:
-                        continue
-                    seen.add(op.getSeqnum())
-                    steps.append(_step(op, depth))
-                    if op.getOutput() is not None:
-                        queue.append((op.getOutput(), depth + 1))
+        steps, stops, truncated = _walk(start_vn, direction, max_steps)
         return DataflowResult(
             function=format_address(func.getEntryPoint().getOffset()),
             start=str(start_vn),
             direction=direction,
             steps=steps,
-            stops=sorted(stops),
-            truncated=bool(queue) and len(steps) >= max_steps,
+            stops=stops,
+            truncated=truncated,
+        )
+
+    @mcp.tool(annotations=ANNO_READ_ONLY, tags={"decompiler"})
+    @session.require_open
+    def find_variable_accesses(
+        address: Address,
+        variable: Annotated[
+            str,
+            Field(
+                description=(
+                    "Decompiler variable (local, parameter or global used by the "
+                    'function) exactly as list_decompiler_variables shows it. Example: "param_1"'
+                )
+            ),
+        ],
+    ) -> VariableAccesses:
+        """List every place a function reads or writes one decompiler variable.
+
+        Use to see how a parameter or local is used without reading the whole
+        decompiled function; analyze_dataflow follows a value from one place
+        instead. SSA merge points (MULTIEQUAL, INDIRECT) are left out, so each
+        access is an operation in the source. An unused parameter has no
+        accesses. Returns {function, variable, storage, data_type, is_parameter,
+        accesses: [{address, kind: read|write, op}], total}.
+        """
+        func = resolve_function(address)
+        high = _high_function(func)
+        symbols = []
+        for table in (high.getLocalSymbolMap(), high.getGlobalSymbolMap()):
+            it = table.getSymbols()
+            while it.hasNext():
+                symbols.append(it.next())
+        sym = next((x for x in symbols if str(x.getName()) == variable), None)
+        if sym is None:
+            names = sorted({str(x.getName()) for x in symbols})
+            close = difflib.get_close_matches(variable, names, n=5, cutoff=0.5)
+            hint = f" Did you mean: {', '.join(close)}?" if close else ""
+            raise GhidraError(
+                f"No variable {variable!r} in {func.getName()}.{hint} "
+                f"Variables: {', '.join(names[:40])}.",
+                error_type="NotFound",
+            )
+
+        hv = sym.getHighVariable()
+        found: dict[tuple, VariableAccess] = {}
+
+        def add(op, kind: str) -> None:
+            if op is None or op.getMnemonic() in ("MULTIEQUAL", "INDIRECT"):
+                return
+            where = _where(op)
+            if where is None:
+                return
+            item = VariableAccess(address=where, kind=kind, op=str(op))
+            found.setdefault((where, kind, item.op), item)
+
+        for vn in list(hv.getInstances()) if hv is not None else []:
+            add(vn.getDef(), "write")
+            for op in vn.getDescendants():
+                add(op, "read")
+        accesses = sorted(found.values(), key=lambda a: (int(a.address, 16), a.kind))
+        storage = sym.getStorage()
+        return VariableAccesses(
+            function=format_address(func.getEntryPoint().getOffset()),
+            variable=str(sym.getName()),
+            storage=str(storage) if storage is not None else "",
+            data_type=str(sym.getDataType()),
+            is_parameter=bool(sym.isParameter()),
+            accesses=accesses,
+            total=len(accesses),
         )
 
     @mcp.tool(name="_normalized_instructions", annotations=ANNO_READ_ONLY, tags={"internal"})
@@ -791,6 +863,135 @@ def register(mcp: FastMCP) -> None:
             ops=ops[:MAX_DIFF_OPS],
             truncated=len(ops) > MAX_DIFF_OPS,
         )
+
+
+# Ops whose output is one of their inputs unchanged (or widened/narrowed), so a
+# constant input is the value's origin rather than an operand of a computation.
+_COPYING_OPS = {"COPY", "CAST", "INT_ZEXT", "INT_SEXT", "MULTIEQUAL", "INDIRECT", "SUBPIECE"}
+
+
+def _where(op) -> str | None:
+    seq = op.getSeqnum() if op is not None else None
+    target = seq.getTarget() if seq is not None else None
+    return format_address(target.getOffset()) if target is not None else None
+
+
+def _call_target(op) -> str:
+    if op.getMnemonic() == "CALLIND":
+        return "indirect"
+    dest = op.getInput(0).getAddress()
+    func = session.program.getFunctionManager().getFunctionAt(dest)
+    func = _resolve_thunk(func)
+    return str(func.getName()) if func is not None else format_location(dest)
+
+
+def _value_inputs(op) -> list:
+    """Inputs of a def op that carry the value further back.
+
+    LOAD's input 0 is an address-space id, SUBPIECE's and INDIRECT's input 1 a
+    byte offset / op reference: none of them are values.
+    """
+    mnem = op.getMnemonic()
+    inputs = list(op.getInputs())
+    if mnem == "LOAD":
+        return inputs[1:2]
+    if mnem in ("SUBPIECE", "INDIRECT"):
+        return inputs[:1]
+    if mnem in _COPYING_OPS:
+        return inputs
+    return [vn for vn in inputs if not vn.isConstant()]
+
+
+def _walk(start_vn, direction: str, max_steps: int):
+    from ghidra.program.model.pcode import HighGlobal, HighParam  # noqa: PLC0415
+
+    steps: list[FlowStep] = []
+    stops: dict[tuple, FlowStop] = {}
+
+    def stop(**fields) -> None:
+        item = FlowStop(**fields)
+        stops.setdefault(tuple(item.model_dump().values()), item)
+
+    def var_name(vn) -> str:
+        hv = vn.getHigh()
+        if hv is not None and hv.getName():
+            return str(hv.getName())
+        if vn.isRegister():
+            reg = session.program.getRegister(vn.getAddress(), vn.getSize())
+            if reg is not None:
+                return str(reg.getName())
+        return str(vn)
+
+    seen = set()
+    queue = deque([(start_vn, 0)])
+    while queue and len(steps) < max_steps:
+        vn, depth = queue.popleft()
+        hv = vn.getHigh()
+        if direction == "backward":
+            if vn.isConstant():
+                stop(kind="constant", value=hex(vn.getOffset()))
+                continue
+            if isinstance(hv, HighGlobal):
+                rep = hv.getRepresentative()
+                where = format_location(rep.getAddress()) if rep is not None else None
+                stop(kind="global", name=var_name(vn), address=where)
+                continue
+            if vn.isInput():
+                if isinstance(hv, HighParam):
+                    stop(kind="parameter", name=var_name(vn), slot=int(hv.getSlot()))
+                else:
+                    stop(kind="input", name=var_name(vn))
+                continue
+            op = vn.getDef()
+            if op is None:
+                stop(kind="no_definition", name=var_name(vn))
+                continue
+            if op.getSeqnum() in seen:
+                continue
+            seen.add(op.getSeqnum())
+            steps.append(_step(op, depth))
+            mnem = op.getMnemonic()
+            if mnem in ("CALL", "CALLIND"):
+                stop(kind="call_result", address=_where(op), target=_call_target(op))
+                continue
+            if mnem == "LOAD":
+                stop(kind="load", address=_where(op))
+            for inp in _value_inputs(op):
+                queue.append((inp, depth + 1))
+            continue
+
+        for op in vn.getDescendants():
+            if op.getSeqnum() in seen:
+                continue
+            seen.add(op.getSeqnum())
+            steps.append(_step(op, depth))
+            mnem = op.getMnemonic()
+            slots = [i for i in range(op.getNumInputs()) if op.getInput(i).equals(vn)]
+            if mnem == "STORE":
+                stop(kind="store", address=_where(op))
+                continue
+            if mnem in ("CALL", "CALLIND"):
+                for i in slots:
+                    if i == 0:
+                        stop(kind="call_target", address=_where(op))
+                    else:
+                        stop(
+                            kind="call_arg",
+                            address=_where(op),
+                            target=_call_target(op),
+                            slot=i - 1,
+                        )
+                continue
+            if mnem == "RETURN":
+                stop(kind="return", address=_where(op))
+                continue
+            out = op.getOutput()
+            if out is None:
+                continue
+            if isinstance(out.getHigh(), HighGlobal):
+                stop(kind="global", name=var_name(out), address=_where(op))
+            queue.append((out, depth + 1))
+    return steps, list(stops.values()), bool(queue) and len(steps) >= max_steps
 
 
 def _step(op, depth: int) -> FlowStep:
