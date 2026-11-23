@@ -487,7 +487,7 @@ def register(mcp: FastMCP) -> None:
 
         tx_id = program.startTransaction("Delete structure")
         try:
-            dtm.remove(dt, None)
+            dtm.remove(dt)
             program.endTransaction(tx_id, True)
         except Exception as e:
             program.endTransaction(tx_id, False)

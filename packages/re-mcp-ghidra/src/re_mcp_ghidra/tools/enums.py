@@ -202,7 +202,7 @@ def register(mcp: FastMCP) -> None:
 
         tx_id = program.startTransaction("Delete enum")
         try:
-            dtm.remove(enum_dt, None)
+            dtm.remove(enum_dt)
             program.endTransaction(tx_id, True)
         except Exception as e:
             program.endTransaction(tx_id, False)
