@@ -6,7 +6,7 @@
 
 from __future__ import annotations
 
-from typing import Annotated
+from typing import Annotated, Literal
 
 from fastmcp import FastMCP
 from pydantic import BaseModel, Field
@@ -17,8 +17,10 @@ from re_mcp_ghidra.helpers import (
     ANNO_MUTATE,
     ANNO_READ_ONLY,
     Address,
+    FilterPattern,
     Limit,
     Offset,
+    compile_filter,
     format_address,
     paginate_iter,
     resolve_address,
@@ -34,9 +36,13 @@ class SetBookmarkResult(BaseModel):
     """Result of setting a bookmark."""
 
     address: str = Field(description="Bookmark address (hex).")
+    type: str = Field(default="Note", description="Bookmark type.")
     category: str = Field(description="Bookmark category.")
     description: str = Field(description="Bookmark description.")
     status: str = Field(description="Operation status.")
+
+
+BookmarkType = Literal["Note", "Info", "Warning", "Error", "Analysis"]
 
 
 class BookmarkItem(BaseModel):
@@ -69,11 +75,20 @@ def register(mcp: FastMCP) -> None:
             str,
             Field(description="Free-form category used to group bookmarks. Example: 'Suspicious'"),
         ] = "Analysis",
+        type: Annotated[
+            BookmarkType,
+            Field(
+                description=(
+                    "Bookmark type, which Ghidra's bookmark view filters and colours by. "
+                    'Example: "Warning"'
+                )
+            ),
+        ] = "Note",
     ) -> SetBookmarkResult:
-        """Add a Note-type bookmark at an address under a category, with a description.
+        """Add a bookmark at an address: a type, a category and a description.
 
         Use list_bookmarks to enumerate and delete_bookmark to remove them. Returns
-        address, category, description and status "ok".
+        address, type, category, description and status "ok".
         """
         program = session.program
         addr = resolve_address(address)
@@ -81,7 +96,7 @@ def register(mcp: FastMCP) -> None:
 
         tx_id = program.startTransaction("Set bookmark")
         try:
-            bm_mgr.setBookmark(addr, "Note", category, description)
+            bm_mgr.setBookmark(addr, type, category, description)
             program.endTransaction(tx_id, True)
         except Exception as e:
             program.endTransaction(tx_id, False)
@@ -89,6 +104,7 @@ def register(mcp: FastMCP) -> None:
 
         return SetBookmarkResult(
             address=format_address(addr.getOffset()),
+            type=type,
             category=category,
             description=description,
             status="ok",
@@ -99,20 +115,60 @@ def register(mcp: FastMCP) -> None:
     def list_bookmarks(
         offset: Offset = 0,
         limit: Limit = 100,
+        type: Annotated[
+            str,
+            Field(
+                description=(
+                    "Only this type (Note, Info, Warning, Error, Analysis); empty for "
+                    'all. Example: "Error"'
+                )
+            ),
+        ] = "",
+        category: Annotated[
+            str, Field(description='Only this exact category. Example: "Suspicious"')
+        ] = "",
+        filter_pattern: FilterPattern = "",
+        start_address: Annotated[
+            str, Field(description='Only at or after this address. Example: "0x401000"')
+        ] = "",
+        end_address: Annotated[
+            str, Field(description='Only at or before this address. Example: "0x402000"')
+        ] = "",
     ) -> dict:
-        """List all bookmarks in the database, paginated.
+        """List bookmarks, filtered by type, category, text or address range.
 
-        Args:
-            offset: Pagination offset.
-            limit: Maximum number of results.
+        Ghidra's analyzers leave Error and Analysis bookmarks (bad
+        instructions, failed disassembly); set_bookmark adds your own.
+        filter_pattern is a regex over the description and category. Returns
+        {items: [{address, category, description, type}], total, offset,
+        limit, has_more, categories: {type: [categories]}}.
         """
         program = session.program
         bm_mgr = program.getBookmarkManager()
+        filt = compile_filter(filter_pattern)
+        start = resolve_address(start_address) if start_address else None
+        end = resolve_address(end_address) if end_address else None
 
         def _gen():
-            bm_iter = bm_mgr.getBookmarksIterator()
+            if start is not None:
+                bm_iter = bm_mgr.getBookmarksIterator(start, True)
+            elif type:
+                bm_iter = bm_mgr.getBookmarksIterator(type)
+            else:
+                bm_iter = bm_mgr.getBookmarksIterator()
             while bm_iter.hasNext():
                 bm = bm_iter.next()
+                if end is not None and bm.getAddress().compareTo(end) > 0:
+                    if start is not None:
+                        break
+                    continue
+                if type and bm.getTypeString() != type:
+                    continue
+                if category and bm.getCategory() != category:
+                    continue
+                fields = (bm.getComment() or "", bm.getCategory() or "")
+                if filt and not any(filt.search(f) for f in fields):
+                    continue
                 yield BookmarkItem(
                     address=format_address(bm.getAddress().getOffset()),
                     category=bm.getCategory() or "",
@@ -120,7 +176,13 @@ def register(mcp: FastMCP) -> None:
                     type=bm.getTypeString() or "Note",
                 ).model_dump()
 
-        return paginate_iter(_gen(), offset, limit)
+        page = paginate_iter(_gen(), offset, limit)
+        page["categories"] = {
+            str(t.getTypeString()): sorted(str(c) for c in bm_mgr.getCategories(t.getTypeString()))
+            for t in bm_mgr.getBookmarkTypes()
+            if bm_mgr.getCategories(t.getTypeString())
+        }
+        return page
 
     @mcp.tool(annotations=ANNO_DESTRUCTIVE, tags={"navigation"})
     @session.require_open

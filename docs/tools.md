@@ -235,8 +235,8 @@ signature and documentation.
 | Tool | Listed | What it does |
 |---|---|---|
 | `delete_bookmark` |  | Delete the bookmarks at an address, optionally only those in one category. |
-| `list_bookmarks` |  | List all bookmarks in the database, paginated. |
-| `set_bookmark` |  | Add a Note-type bookmark at an address under a category, with a description. |
+| `list_bookmarks` |  | List bookmarks, filtered by type, category, text or address range. |
+| `set_bookmark` |  | Add a bookmark at an address: a type, a category and a description. |
 
 ## processor
 

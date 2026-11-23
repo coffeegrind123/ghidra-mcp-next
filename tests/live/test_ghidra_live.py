@@ -355,6 +355,15 @@ async def _list_cases(rec: Recorder, second: dict) -> dict[str, Any]:
     out["funcs_tagged"] = await rec.tool("list_functions", tag="listcase")
     out["funcs_untagged"] = await rec.tool("list_functions", untagged=True, limit=5000)
     await rec.tool("tag_function", address=second["start"], remove=["listcase"])
+    out["bookmark"] = await rec.tool(
+        "set_bookmark", address=second["start"], type="Warning", category="ListCase"
+    )
+    out["bm_type"] = await rec.tool("list_bookmarks", type="Warning", limit=500)
+    out["bm_category"] = await rec.tool("list_bookmarks", category="ListCase")
+    out["bm_text"] = await rec.tool("list_bookmarks", filter_pattern="^ListCase$")
+    out["bm_range"] = await rec.tool(
+        "list_bookmarks", start_address=second["start"], end_address=second["start"]
+    )
     thunk = await rec("execute", database=rec.database, read_only=True, code=FIND_THUNK)
     out["thunk"] = await rec.tool("get_function", address=thunk["result"])
     out["not_thunk"] = await rec.tool("get_function", address=second["start"])
@@ -809,6 +818,16 @@ def test_list_filters(run):
     second = run["second"]["start"]
     assert [i["start"] for i in x["funcs_tagged"]["items"]] == [second]
     assert second not in {i["start"] for i in x["funcs_untagged"]["items"]}
+
+
+def test_bookmark_types_and_filters(run):
+    x = run["lists"]
+    second = run["second"]["start"]
+    assert x["bookmark"]["type"] == "Warning"
+    for key in ("bm_type", "bm_category", "bm_text", "bm_range"):
+        assert second in [i["address"] for i in x[key]["items"]], key
+    assert {i["type"] for i in x["bm_type"]["items"]} == {"Warning"}
+    assert "ListCase" in x["bm_category"]["categories"]["Warning"]
 
 
 def test_thunk_target(run):
