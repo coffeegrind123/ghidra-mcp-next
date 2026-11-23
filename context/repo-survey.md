@@ -56,9 +56,13 @@ Ported:
 | Not-found errors list close names; "code but no function" hint | b71a870 |
 | set_decompiler_comment(line=) places comments by decompiled line | ea039c0 |
 | get_call_graph direction/depth/cycle markers/truncation; find_common_callers (counts imports) | 89d28fd |
+| analyze_dataflow typed, located stops (parameter/slot, global, load, call_result, store, call_arg, return); operand constants no longer origins; find_variable_accesses; ReVa dataflow fixture | eafc50e, d7e614e |
+| Namespace-qualified names resolve ("Dog::vtable") | 0fe18a0 |
+| analyze_vtable, find_vtables_containing, find_vtable_callers (adjacent-table merge fixed, pure-virtual gap kept, typed/offset_only confidence); ReVa C++ fixture | 61dd391 |
+| diff_functions / diff_functions_across level="decompiled" with artifact classes (var-renumber, string-label) | bc1d5b2 |
+| Signature export pages overlapped (found while reading the matcher for diff_programs) | a3a524d |
 
-Left (priority order): dataflow stops typed and located, find_variable_accesses; vtable
-tools (needs ReVa's Apache-2.0 C++ test fixtures); decompiled-level diff and a program change summary; list filters and import ordinals. MAYBE and SKIP lists
+Left (priority order): program change summary (diff_programs) and diff_strings; list filters and import ordinals. MAYBE and SKIP lists
 in the spec.
 
 ## cellebrite-labs/ghidra-rpc
