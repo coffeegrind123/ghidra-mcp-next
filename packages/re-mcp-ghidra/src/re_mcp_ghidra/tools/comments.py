@@ -36,6 +36,9 @@ class SetCommentResult(BaseModel):
     comment_type: str
     comment: str
     status: str
+    placed_at_line: int = Field(
+        default=0, description="Decompiled line the comment went on (when line was given)."
+    )
 
 
 class GetFunctionCommentResult(BaseModel):
@@ -50,6 +53,29 @@ class SetFunctionCommentResult(BaseModel):
     function_name: str
     comment: str
     status: str
+
+
+def _address_for_line(function: str, line: int):
+    """(address, line used) for a decompiled line, or the nearest line with an address."""
+    from ghidra.util.task import TaskMonitor  # noqa: PLC0415
+
+    from re_mcp_ghidra.helpers import resolve_function  # noqa: PLC0415
+    from re_mcp_ghidra.tools.functions import decompiled_lines  # noqa: PLC0415
+
+    func = resolve_function(function)
+    results = session.decompiler().decompileFunction(func, 60, TaskMonitor.DUMMY)
+    if not results.decompileCompleted():
+        raise GhidraError(
+            f"Decompilation failed: {results.getErrorMessage()}", error_type="DecompilationFailed"
+        )
+    lines = decompiled_lines(results)
+    if not 1 <= line <= len(lines):
+        raise GhidraError(f"Line {line} is outside 1..{len(lines)}.", error_type="InvalidArgument")
+    for distance in range(len(lines)):
+        for candidate in (line - distance, line + distance):
+            if 1 <= candidate <= len(lines) and lines[candidate - 1].address:
+                return resolve_address(lines[candidate - 1].address), candidate
+    raise GhidraError(f"No line of {func.getName()} has an address.", error_type="NotFound")
 
 
 def register(mcp: FastMCP) -> None:
@@ -160,18 +186,34 @@ def register(mcp: FastMCP) -> None:
                 "Example: 'walk the import table'"
             ),
         ],
+        line: Annotated[
+            int,
+            Field(
+                ge=0,
+                description=(
+                    "Line number from decompile_function(line_numbers=true); address then "
+                    "names the function. A line with no address of its own uses the "
+                    "nearest line that has one. 0: comment at address. Example: 42"
+                ),
+            ),
+        ] = 0,
     ) -> SetCommentResult:
-        """Write the PRE comment at an address; it shows above that line in pseudocode.
+        """Write the PRE comment shown above a line of pseudocode.
 
-        Shorthand for set_comment with comment_type="pre". Fails with NotFound when no
-        code unit exists there. Returns address, comment_type ("pre"), comment and
-        status "ok".
+        Give an address, or a function plus a decompiled line number. Shorthand for
+        set_comment with comment_type="pre". Fails with NotFound when no code unit
+        exists there. Returns address, comment_type ("pre"), comment, status "ok",
+        and placed_at_line when line was given.
         """
         from ghidra.program.model.listing import CodeUnit  # noqa: PLC0415
 
         program = session.program
         listing = program.getListing()
-        addr = resolve_address(address)
+        placed = 0
+        if line:
+            addr, placed = _address_for_line(address, line)
+        else:
+            addr = resolve_address(address)
         cu = listing.getCodeUnitAt(addr)
         if cu is None:
             raise GhidraError(
@@ -192,6 +234,7 @@ def register(mcp: FastMCP) -> None:
             comment_type="pre",
             comment=comment,
             status="ok",
+            placed_at_line=placed,
         )
 
     @mcp.tool(annotations=ANNO_READ_ONLY, tags={"comments", "functions"})

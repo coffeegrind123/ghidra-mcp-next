@@ -323,6 +323,10 @@ async def _extras_cases(rec: Recorder, first: dict, second: dict) -> dict[str, A
         "decompile_function", address=second["start"], line_numbers=True, limit=3
     )
     out["whole"] = await rec.tool("decompile_function", address=second["start"])
+    out["by_line"] = await rec.tool(
+        "set_decompiler_comment", address=second["start"], line=3, comment="by line"
+    )
+    out["by_line_check"] = await rec.tool("get_comment", address=out["by_line"]["address"])
     out["context"] = await rec.tool("get_context_registers", address=second["start"])
     reg = out["context"]["registers"][0]["register"]
     out["context_conflict"] = await rec.tool(
@@ -732,6 +736,8 @@ def test_decompile_lines_and_listing_extras(run):
     assert [ln["line"] for ln in lines["lines"]] == [1, 2, 3]
     assert lines["total_lines"] == x["whole"]["total_lines"] > 3
     assert any(ln["address"] for ln in lines["lines"]) or lines["total_lines"] > 3
+    assert x["by_line"]["placed_at_line"] >= 1
+    assert x["by_line_check"]["pre_comment"] == "by line"
     assert x["context"]["registers"]
     assert x["context_conflict"]["error_type"] in ("ContextConflict", None)
     assert x["context_batch"]["results"][1]["verified"] is True
