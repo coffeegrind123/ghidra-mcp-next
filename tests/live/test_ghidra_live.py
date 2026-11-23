@@ -198,6 +198,9 @@ async def _scenario(binary: Path) -> dict[str, Any]:
         }
         imports = await rec.tool("list_imports", limit=50)
         out["import"] = imports["items"][0]
+        out["typo_of"] = (await rec.tool("get_function", address=first["start"]))["name"]
+        out["typo"] = await rec.tool("get_function", address=out["typo_of"] + "x")
+        out["no_function"] = await rec.tool("get_function", address="0x1")
         out["import_refs_by_address"] = await rec.tool(
             "get_xrefs_to", address=out["import"]["address"]
         )
@@ -677,6 +680,13 @@ def test_find_register_value(run, case):
         assert got["found"] is True, got
         assert got["value"].lower() == expected
         assert got["source_address"], got
+
+
+def test_not_found_errors_suggest(run):
+    typo = run["typo"]
+    assert typo["error_type"] == "InvalidAddress"
+    assert run["typo_of"] in typo["close_matches"], (run["typo_of"], typo)
+    assert run["no_function"]["error_type"] in ("NotFound", "InvalidAddress")
 
 
 def test_import_addresses_keep_their_space(run):

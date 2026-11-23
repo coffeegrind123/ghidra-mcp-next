@@ -110,7 +110,35 @@ def resolve_address_value(addr: str | int) -> int:
     if sym_iter.hasNext():
         return sym_iter.next().getAddress().getOffset()
 
-    raise GhidraError(f"Cannot resolve address: {addr_str!r}", error_type="InvalidAddress")
+    close = close_names(addr_str)
+    hint = f" Close matches: {', '.join(close)}." if close else ""
+    raise GhidraError(
+        f"Cannot resolve address: {addr_str!r} is not a number or a known symbol.{hint}",
+        error_type="InvalidAddress",
+        close_matches=close,
+    )
+
+
+def close_names(name: str, limit: int = 5) -> list[str]:
+    """Function and label names that look like *name* (for not-found errors)."""
+    import difflib  # noqa: PLC0415
+
+    from re_mcp_ghidra.session import session  # noqa: PLC0415
+
+    program = session.program
+    if program is None:
+        return []
+    lowered = name.lower()
+    names = set()
+    for sym in program.getSymbolTable().getAllSymbols(False):
+        text = str(sym.getName())
+        if lowered in text.lower():
+            names.add(text)
+            if len(names) >= 200:
+                break
+    if len(names) < limit:
+        names.update(str(f.getName()) for f in program.getFunctionManager().getFunctions(True))
+    return difflib.get_close_matches(name, sorted(names), n=limit, cutoff=0.5)
 
 
 def to_ghidra_address(offset: int):
@@ -186,12 +214,15 @@ def resolve_function(addr: str | int):
         raise GhidraError("No database is open", error_type="NoDatabase")
 
     ghidra_addr = resolve_address(addr)
-    func = program.getFunctionManager().getFunctionContaining(ghidra_addr)
+    fm = program.getFunctionManager()
+    func = fm.getFunctionContaining(ghidra_addr) or fm.getFunctionAt(ghidra_addr)
     if func is None:
-        raise GhidraError(
-            f"No function at {format_address(ghidra_addr.getOffset())}",
-            error_type="NotFound",
-        )
+        where = format_location(ghidra_addr)
+        if program.getListing().getInstructionAt(ghidra_addr) is not None:
+            hint = " There is code here but no function: create_function makes one."
+        else:
+            hint = " list_functions or find_function_candidates shows functions."
+        raise GhidraError(f"No function at {where}.{hint}", error_type="NotFound")
     return func
 
 
