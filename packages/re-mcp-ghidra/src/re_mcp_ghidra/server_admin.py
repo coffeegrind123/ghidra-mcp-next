@@ -62,6 +62,80 @@ async def run_admin(*args: str) -> dict:
     return body
 
 
+# Ghidra's repository access levels (ghidra.framework.remote.User).
+ACCESS_LEVELS = {"read_only": 0, "write": 1, "admin": 2}
+ACCESS_NAMES = {v: k for k, v in ACCESS_LEVELS.items()}
+
+
+def _acl(repo) -> list[dict]:
+    return sorted(
+        (
+            {"user": str(u.getName()), "access": ACCESS_NAMES.get(int(u.getPermissionType()), "?")}
+            for u in repo.getUserList()
+        ),
+        key=lambda e: e["user"],
+    )
+
+
+def _set_permission(repo, user: str, access: str) -> dict:
+    """Merge one user's access into the repository ACL (setUserList replaces it whole)."""
+    from ghidra.framework.remote import User  # noqa: PLC0415
+
+    if access != "none" and access not in ACCESS_LEVELS:
+        raise GhidraError(f"Unknown access {access!r}.", error_type="InvalidArgument")
+    entries = {str(u.getName()): int(u.getPermissionType()) for u in repo.getUserList()}
+    if access == "none":
+        entries.pop(user, None)
+    else:
+        entries[user] = ACCESS_LEVELS[access]
+    if ACCESS_LEVELS["admin"] not in entries.values():
+        raise GhidraError(
+            "That would leave the repository without an admin.", error_type="InvalidArgument"
+        )
+    users = [User(name, level) for name, level in sorted(entries.items())]
+    repo.setUserList(users, repo.anonymousAccessAllowed())
+    return {"acl": _acl(repo)}
+
+
+def _checkouts(repo, folder: str) -> list[dict]:
+    """Every checkout under *folder*, walked on the server (not the local project)."""
+    import datetime  # noqa: PLC0415
+
+    out = []
+    pending = [folder or "/"]
+    while pending:
+        path = pending.pop()
+        out.extend(
+            {
+                "path": str(item.getPathName()),
+                "checkout_id": int(co.getCheckoutId()),
+                "user": str(co.getUser()),
+                "version": int(co.getCheckoutVersion()),
+                "exclusive": str(co.getCheckoutType()) == "EXCLUSIVE",
+                "date": datetime.datetime.fromtimestamp(
+                    int(co.getCheckoutTime()) / 1000, tz=datetime.UTC
+                ).isoformat(),
+                "project": str(co.getProjectPath() or ""),
+            }
+            for item in repo.getItemList(path) or []
+            for co in repo.getCheckouts(path, item.getName()) or []
+        )
+        pending.extend(path.rstrip("/") + "/" + str(s) for s in repo.getSubfolderList(path) or [])
+    return sorted(out, key=lambda c: (c["path"], c["checkout_id"]))
+
+
+def _terminate(repo, path: str, checkout_id: int) -> dict:
+    folder, _, name = path.rpartition("/")
+    folder = folder or "/"
+    ids = [int(c.getCheckoutId()) for c in repo.getCheckouts(folder, name) or []]
+    if checkout_id not in ids:
+        raise GhidraError(
+            f"No checkout {checkout_id} on {path} (has: {ids or 'none'}).", error_type="NotFound"
+        )
+    repo.terminateCheckout(folder, name, checkout_id, False)
+    return {"path": path, "terminated": checkout_id}
+
+
 def _emit(body: dict) -> None:
     print(RESULT_PREFIX + json.dumps(body), flush=True)
 
@@ -109,6 +183,21 @@ def main() -> None:
                     "files": files,
                 }
             )
+        elif command == "list-users":
+            host, port = parse_server_address(args[0])
+            server = sp.connect(host, port)
+            _emit(
+                {"server": f"{host}:{port}", "users": sorted(str(u) for u in server.getAllUsers())}
+            )
+        elif command == "set-permission":
+            target = parse_server_url(args[0], require_path=False)
+            _emit(_set_permission(sp.repository(target), args[1], args[2]))
+        elif command == "list-checkouts":
+            target = parse_server_url(args[0], require_path=False)
+            _emit({"checkouts": _checkouts(sp.repository(target), target.path)})
+        elif command == "terminate-checkout":
+            target = parse_server_url(args[0], require_path=True)
+            _emit(_terminate(sp.repository(target), target.path, int(args[1])))
         else:
             raise GhidraError(f"Unknown command {command!r}", error_type="InvalidArgument")
     except GhidraError as exc:

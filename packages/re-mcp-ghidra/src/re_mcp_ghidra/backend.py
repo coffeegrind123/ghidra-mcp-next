@@ -7,7 +7,7 @@
 from __future__ import annotations
 
 import os
-from typing import TYPE_CHECKING, Annotated, Any
+from typing import TYPE_CHECKING, Annotated, Any, Literal
 
 from pydantic import Field
 from re_mcp.backend import BackendInfo
@@ -395,3 +395,74 @@ def _register_repository_tools(mcp: FastMCP) -> None:
         files: [{path, version, content_type}]}.
         """
         return await run_admin("list-files", repository)
+
+    @mcp.tool(annotations={"title": "List Server Users", "readOnlyHint": True})
+    async def list_server_users(server: _SERVER_ADDRESS) -> dict:
+        """List the user accounts on a Ghidra Server.
+
+        Use before set_repository_permission to get exact user names. Needs a
+        server admin; otherwise fails with an access error. Returns {server,
+        users: [names]}.
+        """
+        return await run_admin("list-users", server)
+
+    @mcp.tool(annotations={"title": "Set Repository Permission", "destructiveHint": True})
+    async def set_repository_permission(
+        repository: Annotated[
+            str,
+            Field(description='Repository URL. Example: "ghidra://re-server/firmware"'),
+        ],
+        user: Annotated[str, Field(description='Server user name. Example: "alice"')],
+        access: Annotated[
+            Literal["read_only", "write", "admin", "none"],
+            Field(description='Access to grant; none removes the user. Example: "write"'),
+        ],
+    ) -> dict:
+        """Grant, change or remove one user's access to a repository.
+
+        Other users keep their access (the change is merged into the list, which
+        Ghidra otherwise replaces whole). Refuses to remove the last admin. Needs
+        repository admin. Returns {acl: [{user, access}]}, the full list after
+        the change.
+        """
+        return await run_admin("set-permission", repository, user, access)
+
+    @mcp.tool(annotations={"title": "List Repository Checkouts", "readOnlyHint": True})
+    async def list_repository_checkouts(
+        repository: Annotated[
+            str,
+            Field(
+                description=(
+                    "Repository URL, optionally with a folder to start from. "
+                    'Example: "ghidra://re-server/firmware"'
+                )
+            ),
+        ],
+    ) -> dict:
+        """List every checkout in a repository (or folder), by anyone.
+
+        Walks the server itself, so it sees files never opened locally. Use to
+        find who holds a file, or a stale checkout to terminate. Returns
+        {checkouts: [{path, checkout_id, user, version, exclusive, date,
+        project}]}.
+        """
+        return await run_admin("list-checkouts", repository)
+
+    @mcp.tool(annotations={"title": "Terminate Checkout", "destructiveHint": True})
+    async def terminate_checkout(
+        program: Annotated[
+            str,
+            Field(description='Program URL. Example: "ghidra://re-server/firmware/app.bin"'),
+        ],
+        checkout_id: Annotated[
+            int,
+            Field(description="Checkout id from list_repository_checkouts. Example: 12"),
+        ],
+    ) -> dict:
+        """End someone's checkout of a file on the server (admin cleanup).
+
+        DESTRUCTIVE for the holder: their un-checked-in work can no longer be
+        checked in. For your own checkout of an open program use undo_checkout
+        instead. The id is required. Returns {path, terminated}.
+        """
+        return await run_admin("terminate-checkout", program, str(checkout_id))

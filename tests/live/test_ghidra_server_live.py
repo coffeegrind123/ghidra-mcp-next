@@ -49,6 +49,7 @@ def _free_base_port(start: int = 13300, stop: int = 14000) -> int:
 
 SERVER_PORT = _free_base_port()
 USER = "tester"
+READER = "reader"
 DEFAULT_PASSWORD = "changeme"  # what svrAdmin -add gives a new user
 SEED = Path(__file__).with_name("seed_server.py")
 STARTUP_TIMEOUT_S = 120
@@ -119,6 +120,24 @@ def ghidra_server(tmp_path_factory: pytest.TempPathFactory):
             timeout=STARTUP_TIMEOUT_S,
         )
         _wait_for(log, rf"User '{USER}' added", proc)
+        subprocess.run(
+            [
+                str(ghidra / "support/launch.sh"),
+                "fg",
+                "jdk",
+                "svrAdmin",
+                "512M",
+                "-Djava.awt.headless=true",
+                "ghidra.server.ServerAdmin",
+                str(conf),
+                "-add",
+                READER,
+            ],
+            check=True,
+            capture_output=True,
+            timeout=STARTUP_TIMEOUT_S,
+        )
+        _wait_for(log, rf"User '{READER}' added", proc)
         binary = work / "sample"
         shutil.copy(SAMPLE, binary)
         seeded = subprocess.run(
@@ -247,6 +266,44 @@ async def _scenario(work: Path) -> dict[str, Any]:
 
         sdb = (await call("open_database", file_path=out["added"]["url"]))["database"]
         await call("wait_for_analysis", database=sdb)
+        out["users"] = await call("call", tool="list_server_users", arguments={"server": server})
+        shared = f"ghidra://{server}/shared"
+        out["grant"] = await call(
+            "call",
+            tool="set_repository_permission",
+            arguments={"repository": shared, "user": READER, "access": "read_only"},
+        )
+        out["revoke"] = await call(
+            "call",
+            tool="set_repository_permission",
+            arguments={"repository": shared, "user": READER, "access": "none"},
+        )
+        out["last_admin"] = await call(
+            "call",
+            tool="set_repository_permission",
+            arguments={"repository": shared, "user": USER, "access": "write"},
+        )
+
+        cdb = (await call("open_database", file_path=f"ghidra://{server}/testrepo/bins/sample"))[
+            "database"
+        ]
+        await call("wait_for_analysis", database=cdb)
+        await call("call", tool="checkout_file", arguments={}, database=cdb)
+        await call("close_database", database=cdb)
+        repo_url = f"ghidra://{server}/testrepo"
+        out["checkouts"] = await call(
+            "call", tool="list_repository_checkouts", arguments={"repository": repo_url}
+        )
+        held = out["checkouts"]["checkouts"][0]
+        out["terminated"] = await call(
+            "call",
+            tool="terminate_checkout",
+            arguments={"program": f"{repo_url}{held['path']}", "checkout_id": held["checkout_id"]},
+        )
+        out["after_terminate"] = await call(
+            "call", tool="list_repository_checkouts", arguments={"repository": repo_url}
+        )
+
         out["shared_func"] = await call(
             "call", tool="get_function", arguments={"address": lfirst["start"]}, database=sdb
         )
@@ -301,3 +358,19 @@ def test_add_local_program_to_repository(run):
 
 def test_shared_copy_keeps_annotations(run):
     assert run["shared_func"]["name"] == "shared_name"
+
+
+def test_server_users_and_permissions(run):
+    assert "users" in run["users"], run["users"]
+    assert {USER, READER} <= set(run["users"]["users"])
+    assert {"user": READER, "access": "read_only"} in run["grant"]["acl"]
+    assert READER not in [e["user"] for e in run["revoke"]["acl"]]
+    assert run["last_admin"]["is_error"] is True
+
+
+def test_list_and_terminate_checkouts(run):
+    assert "checkouts" in run["checkouts"], run["checkouts"]
+    held = run["checkouts"]["checkouts"]
+    assert len(held) == 1 and held[0]["user"] == USER
+    assert run["terminated"]["terminated"] == held[0]["checkout_id"]
+    assert run["after_terminate"]["checkouts"] == []
