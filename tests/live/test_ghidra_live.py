@@ -623,9 +623,10 @@ def test_analysis_tools(run):
             assert value.get("is_error") is not True, (key, value)
     scores = [m["cyclomatic"] for m in a["metrics"]["items"]]
     assert scores == sorted(scores, reverse=True)
-    assert a["metrics"]["total"] > 50
+    # The sample is whatever /bin/true the machine has: from ~15 to a few hundred functions.
+    assert a["metrics"]["total"] >= 10
     assert a["metrics_one"]["items"][0]["instructions"] > 0
-    assert a["summary"]["functions"] > 50 and a["summary"]["edges"] > 0
+    assert a["summary"]["functions"] >= 10 and a["summary"]["edges"] > 0
     assert a["roots"]["nodes"]
     caller, callee = a["edge_pair"]
     assert [n["address"].lower() for n in a["path"]["nodes"]] == [caller.lower(), callee.lower()]
