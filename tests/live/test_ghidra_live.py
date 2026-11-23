@@ -195,6 +195,7 @@ async def _scenario(binary: Path) -> dict[str, Any]:
         )
         out["import_refs_by_name"] = await rec.tool("get_xrefs_to", address=out["import"]["name"])
         out["analysis"] = await _analysis_cases(rec, first, second)
+        out["extras"] = await _extras_cases(rec, first, second)
         out["markup"] = await _markup_cases(rec, db, second)
         out["types"] = await _type_cases(rec, db, exclude={first["start"], second["start"]})
         out["low"] = await _low_level_cases(rec, db, exclude={first["start"], second["start"]})
@@ -302,6 +303,53 @@ async def _analysis_cases(rec: Recorder, first: dict, second: dict) -> dict[str,
     )
     out["diff_same"] = await rec.tool("diff_functions", address_a=big, address_b=big)
     out["diff_other"] = await rec.tool("diff_functions", address_a=big, address_b=second["start"])
+    return out
+
+
+async def _extras_cases(rec: Recorder, first: dict, second: dict) -> dict[str, Any]:
+    out: dict[str, Any] = {}
+    out["lines"] = await rec.tool(
+        "decompile_function", address=second["start"], line_numbers=True, limit=3
+    )
+    out["whole"] = await rec.tool("decompile_function", address=second["start"])
+    out["context"] = await rec.tool("get_context_registers", address=second["start"])
+    reg = out["context"]["registers"][0]["register"]
+    out["context_conflict"] = await rec.tool(
+        "set_context_register", start=second["start"], register=reg, value=1
+    )
+    insn = await rec.tool("decode_instruction", address=second["start"])
+    out["context_batch"] = await rec(
+        "batch",
+        database=rec.database,
+        dry_run=True,
+        ops=[
+            {
+                "tool": "clear_code_units",
+                "params": {"address": second["start"], "size": insn["size"]},
+            },
+            {
+                "tool": "set_context_register",
+                "params": {"start": second["start"], "register": reg, "value": 1},
+            },
+        ],
+    )
+    out["context_bad"] = await rec.tool(
+        "set_context_register", start=second["start"], register="NoSuchReg", value=1
+    )
+    out["relocs"] = await rec.tool("list_relocations", limit=500)
+    out["const"] = await rec.tool("find_constant_uses", value="0x1", limit=5)
+    await rec.tool(
+        "set_comment", address=second["start"], comment="NOTE-xyzzy here", comment_type="pre"
+    )
+    out["comments"] = await rec.tool("search_comments", pattern="xyzzy")
+    out["candidates"] = await rec.tool("find_function_candidates")
+    out["thunk"] = await rec.tool(
+        "set_function_thunk", address=second["start"], target=first["start"]
+    )
+    out["thunk_self"] = await rec.tool(
+        "set_function_thunk", address=second["start"], target=second["start"]
+    )
+    out["unthunk"] = await rec.tool("set_function_thunk", address=second["start"])
     return out
 
 
@@ -643,6 +691,27 @@ def test_analysis_tools(run):
     seen = {(h["address"], h["line"]) for h in first_page["items"]}
     assert not seen & {(h["address"], h["line"]) for h in second_page["items"]}
     assert a["diff_other"]["similarity"] < 1.0
+
+
+def test_decompile_lines_and_listing_extras(run):
+    x = run["extras"]
+    for key, value in x.items():
+        if isinstance(value, dict) and key not in ("context_bad", "thunk_self", "context_conflict"):
+            assert value.get("is_error") is not True, (key, value)
+    lines = x["lines"]
+    assert [ln["line"] for ln in lines["lines"]] == [1, 2, 3]
+    assert lines["total_lines"] == x["whole"]["total_lines"] > 3
+    assert any(ln["address"] for ln in lines["lines"]) or lines["total_lines"] > 3
+    assert x["context"]["registers"]
+    assert x["context_conflict"]["error_type"] in ("ContextConflict", None)
+    assert x["context_batch"]["results"][1]["verified"] is True
+    assert x["context_bad"]["error_type"] == "InvalidArgument"
+    assert x["relocs"]["total"] > 0
+    assert x["const"]["total"] > 0 and x["const"]["items"][0]["value"] == 1
+    assert [c["text"] for c in x["comments"]["items"]] == ["NOTE-xyzzy here"]
+    assert "items" in x["candidates"]
+    assert x["thunk"]["target"] and x["thunk_self"]["error_type"] == "InvalidArgument"
+    assert x["unthunk"]["target"] == ""
 
 
 def test_equates_tags_classes_and_wildcards(run):
