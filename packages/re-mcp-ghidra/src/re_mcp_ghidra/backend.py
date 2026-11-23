@@ -251,6 +251,10 @@ class GhidraBackend:
 
         _register_repository_tools(mcp)
 
+        from re_mcp_ghidra.matching import register_matching_tools  # noqa: PLC0415
+
+        register_matching_tools(mcp, pool)
+
     @staticmethod
     def register_prompts(mcp: FastMCP) -> None:
         from re_mcp_ghidra.prompts import register_all  # noqa: PLC0415

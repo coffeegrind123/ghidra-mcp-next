@@ -131,9 +131,19 @@ signature and documentation.
 | `list_repositories` |  | List the repositories on a Ghidra Server that the configured user can see. |
 | `list_repository_files` |  | List every folder and versioned file in a Ghidra Server repository. |
 | `list_targets` | yes | List the processor languages and compiler specs this Ghidra supports. |
+| `match_functions` |  | Find the same functions in two open databases by hash (e.g. two builds). |
 | `open_database` | yes | Open a binary, or a program in an existing Ghidra project. |
+| `propagate_documentation` |  | Copy names, prototypes and comments to the matching functions of another database. |
 | `save_database` | yes | Write the program's changes to its Ghidra project on disk. |
 | `wait_for_analysis` | yes | Block until a database has finished opening (and auto-analysis, if asked). |
+
+## matching
+
+| Tool | Listed | What it does |
+|---|---|---|
+| `apply_function_documentation` |  | Apply exported function documentation to functions in this database. |
+| `get_function_documentation` |  | Export everything that documents one function, as data. |
+| `get_function_hashes` |  | Hash functions to recognise the same code in another build or binary. |
 
 ## memory_blocks
 
@@ -241,7 +251,7 @@ signature and documentation.
 | `get_data_type` |  | Get detailed type information including members by name. |
 | `get_type_info` |  | Report what type is applied at an address: a function's prototype or a data item's type. |
 | `list_data_types` |  | List locally defined data types. |
-| `parse_c_source` |  | Parse C type declarations with Ghidra's CParser and add the parsed type to the program. |
+| `parse_c_source` |  | Parse C declarations (a whole header) and add every type they declare. |
 | `parse_type_declaration` |  | Parse one C type declaration and add the resulting type to the program. |
 | `set_type` |  | Define data of a C-style type at an address, clearing code units it overlaps. |
 

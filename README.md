@@ -32,6 +32,10 @@ reduced to Ghidra only and rebuilt around transactions.
   its annotations) under version control.
 - **Scripts.** `run_ghidra_script` runs existing Java or Python GhidraScripts in
   one transaction.
+- **Documentation transfer.** `match_functions` pairs functions across two open
+  databases by Ghidra's Function ID or Version Tracking hashes (only hashes unique
+  on both sides). `propagate_documentation` copies names, prototypes, comments,
+  labels, locals and the data types they use to the matches as one undo step.
 
 Opening programs without `GhidraProject` is what makes rollback, undo and save
 work. `GhidraProject` holds a transaction open on every program it opens, which
