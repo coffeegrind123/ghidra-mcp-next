@@ -63,9 +63,13 @@ Ported:
 | Signature export pages overlapped (found while reading the matcher for diff_programs) | a3a524d |
 | diff_programs (code/callees/size/bytes change types, unmatched listed, analysis warning) | 3b8ccac |
 | diff_strings (strings, or defined data as type=value, multiset across builds) | a9a7f70 |
+| diff_programs: callees compared through the match (rename/edit of a callee no longer flags its callers; found by CI) | 50315d3 |
+| list_names source/type/external/default-name filters; list_functions tag/untagged/default names; get_function thunk_target | 6ca5f77 |
+| set_bookmark type; list_bookmarks type/category/regex/range filters and categories | 9d659f8 |
+| find_import_references (direct, thunk, IAT/GOT pointer); list_imports original_name and ordinal | 1917602 |
 
-Left (priority order): list filters and import ordinals. MAYBE and SKIP lists
-in the spec.
+Left: MAYBE and SKIP lists in the spec (list_strings include_referencing_functions,
+get_comments over a range, inter-procedural dataflow, VT correlators).
 
 ## cellebrite-labs/ghidra-rpc
 
