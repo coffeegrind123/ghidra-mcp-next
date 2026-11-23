@@ -296,6 +296,10 @@ async def _analysis_cases(rec: Recorder, first: dict, second: dict) -> dict[str,
         address=out["pcode_high"]["items"][-1]["address"],
         direction="backward",
     )
+    out["dsearch"] = await rec.tool("search_decompiled", pattern=r"return", max_hits=5)
+    out["dsearch_next"] = await rec.tool(
+        "search_decompiled", pattern=r"return", max_hits=5, cursor=out["dsearch"]["next_cursor"]
+    )
     out["diff_same"] = await rec.tool("diff_functions", address_a=big, address_b=big)
     out["diff_other"] = await rec.tool("diff_functions", address_a=big, address_b=second["start"])
     return out
@@ -633,6 +637,11 @@ def test_analysis_tools(run):
     assert a["pcode_low"]["total"] > 0 and a["pcode_high"]["total"] > 0
     assert a["dataflow"]["steps"] or a["dataflow"]["stops"]
     assert a["diff_same"]["similarity"] == 1.0
+    first_page, second_page = a["dsearch"], a["dsearch_next"]
+    assert len(first_page["items"]) >= 5 and first_page["next_cursor"]
+    assert second_page["items"]
+    seen = {(h["address"], h["line"]) for h in first_page["items"]}
+    assert not seen & {(h["address"], h["line"]) for h in second_page["items"]}
     assert a["diff_other"]["similarity"] < 1.0
 
 
