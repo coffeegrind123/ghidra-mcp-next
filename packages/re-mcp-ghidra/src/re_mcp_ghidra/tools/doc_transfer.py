@@ -508,7 +508,8 @@ def register(mcp: FastMCP) -> None:
         scores the pairs. Features: instruction, block, edge and call counts,
         callee identities (names for named callees, a Function ID hash for
         unnamed ones), referenced strings, small constants, and block hashes
-        that ignore addresses. Thunks and externals are skipped. Returns {items:
+        that ignore addresses. Thunks and externals are skipped; offset and
+        limit count functions, so a page can hold fewer items. Returns {items:
         [{address, name, is_default_name, instructions, blocks, edges, calls,
         callees, strings, constants, block_hashes}], total, offset, limit,
         has_more}.
@@ -521,14 +522,13 @@ def register(mcp: FastMCP) -> None:
             if (names == "named" and default) or (names == "unnamed" and not default):
                 continue
             funcs.append(func)
+        # Pages are fixed slices of the function list, so a page may hold fewer
+        # than limit items (short functions skipped) but never shifts the next.
         items = []
-        for func in funcs[offset:]:
+        for func in funcs[offset : offset + limit]:
             sig = function_signature(func)
-            if sig["instructions"] < min_instructions:
-                continue
-            items.append(sig)
-            if len(items) >= limit:
-                break
+            if sig["instructions"] >= min_instructions:
+                items.append(sig)
         return {
             "items": items,
             "total": len(funcs),

@@ -337,6 +337,16 @@ async def _analysis_cases(rec: Recorder, first: dict, second: dict) -> dict[str,
 
 async def _extras_cases(rec: Recorder, first: dict, second: dict) -> dict[str, Any]:
     out: dict[str, Any] = {}
+    whole = await rec.tool("export_function_signatures", limit=2000)
+    out["sig_whole"] = [i["address"] for i in whole["items"]]
+    paged, offset = [], 0
+    while True:
+        page = await rec.tool("export_function_signatures", offset=offset, limit=7)
+        paged += [i["address"] for i in page["items"]]
+        if not page["has_more"]:
+            break
+        offset += page["limit"]
+    out["sig_paged"] = paged
     out["lines"] = await rec.tool(
         "decompile_function", address=second["start"], line_numbers=True, limit=3
     )
@@ -756,6 +766,13 @@ def test_analysis_tools(run):
     assert same["level"] == "decompiled" and same["similarity"] == 1.0 and same["hunks"] == []
     assert other["similarity"] < 1.0
     assert any(h["kind"] == "code" for h in other["hunks"])
+
+
+def test_signature_pages_neither_repeat_nor_skip(run):
+    # Short functions are skipped inside a page; that must not shift pages.
+    x = run["extras"]
+    assert len(x["sig_paged"]) == len(set(x["sig_paged"]))
+    assert x["sig_paged"] == x["sig_whole"]
 
 
 def test_decompile_lines_and_listing_extras(run):
