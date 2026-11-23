@@ -87,11 +87,12 @@ Ported:
 | search_decompiled with resume cursor and revision-keyed cache | 83065f2 |
 | Context registers, relocations, set_function_thunk | 345c655 |
 | decompile timeout_s | e3ba0fb |
+| Decompiler variable edits by storage, verified read-back, edit_decompiler_variables (atomic); EditDisplaced for the measured silent neighbour deletion | 1af139e |
 
 Found while testing 12.2 (not from either repo): Ghidra 12.2 clients reject a Ghidra
 Server's self-issued certificate; GHIDRA_MCP_SERVER_CACERTS / _TRUST_LOOPBACK (bf97d1c).
 
-Left: decompiler variable edits by storage with verified read-back; Version Tracking run
+Left: Version Tracking run
 inside the destination worker (source opened read-only from its saved project) and BSim
 as a fuzzy engine, both gated on the precision/recall measurement in the spec §3.5;
 MAYBE items in the spec.
