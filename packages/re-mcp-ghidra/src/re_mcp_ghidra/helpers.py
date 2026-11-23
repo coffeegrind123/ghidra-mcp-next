@@ -100,15 +100,9 @@ def resolve_address_value(addr: str | int) -> int:
     if program is None:
         raise GhidraError("No database is open", error_type="NoDatabase")
 
-    symbol_table = program.getSymbolTable()
-    symbols = symbol_table.getGlobalSymbols(addr_str)
-    if symbols:
-        return symbols[0].getAddress().getOffset()
-
-    # Try namespace-qualified symbols via targeted lookup
-    sym_iter = symbol_table.getSymbols(addr_str)
-    if sym_iter.hasNext():
-        return sym_iter.next().getAddress().getOffset()
+    symbol = _lookup_symbol(addr_str)
+    if symbol is not None:
+        return symbol.getAddress().getOffset()
 
     close = close_names(addr_str)
     hint = f" Close matches: {', '.join(close)}." if close else ""
@@ -188,7 +182,16 @@ def _lookup_symbol(name: str):
     if symbols:
         return symbols[0]
     it = table.getSymbols(name)
-    return it.next() if it.hasNext() else None
+    if it.hasNext():
+        return it.next()
+    if "::" in name:
+        # Namespace-qualified ("Dog::vtable", "std::string::size").
+        from ghidra.app.util import NamespaceUtils  # noqa: PLC0415
+
+        found = NamespaceUtils.getSymbols(name, session.program)
+        if found is not None and not found.isEmpty():
+            return found.get(0)
+    return None
 
 
 def format_location(addr) -> str:
