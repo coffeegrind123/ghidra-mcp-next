@@ -485,6 +485,58 @@ def register(mcp: FastMCP) -> None:
             )
         return ApplyReport(functions=len(entries), **report)
 
+    @mcp.tool(annotations=ANNO_READ_ONLY, tags={"matching"})
+    @session.require_open
+    def export_function_signatures(
+        names: Annotated[
+            Literal["all", "named", "unnamed"],
+            Field(description='Which functions to export. Example: "unnamed"'),
+        ] = "all",
+        min_instructions: Annotated[
+            int,
+            Field(ge=1, description="Skip functions shorter than this. Example: 8"),
+        ] = 8,
+        offset: Annotated[int, Field(ge=0, description="Pagination offset. Example: 0")] = 0,
+        limit: Annotated[
+            int, Field(ge=1, le=2000, description="Page size (max 2000). Example: 500")
+        ] = 500,
+    ) -> dict:
+        """Export per-function features for fuzzy matching against another database.
+
+        Use when exact hashes fail because the code changed a little;
+        match_functions(algorithm="fuzzy") calls this on both databases and
+        scores the pairs. Features: instruction, block, edge and call counts,
+        callee identities (names for named callees, a Function ID hash for
+        unnamed ones), referenced strings, small constants, and block hashes
+        that ignore addresses. Thunks and externals are skipped. Returns {items:
+        [{address, name, is_default_name, instructions, blocks, edges, calls,
+        callees, strings, constants, block_hashes}], total, offset, limit,
+        has_more}.
+        """
+        funcs = []
+        for func in session.program.getFunctionManager().getFunctions(True):
+            if func.isExternal() or func.isThunk():
+                continue
+            default = _is_default(func)
+            if (names == "named" and default) or (names == "unnamed" and not default):
+                continue
+            funcs.append(func)
+        items = []
+        for func in funcs[offset:]:
+            sig = function_signature(func)
+            if sig["instructions"] < min_instructions:
+                continue
+            items.append(sig)
+            if len(items) >= limit:
+                break
+        return {
+            "items": items,
+            "total": len(funcs),
+            "offset": offset,
+            "limit": limit,
+            "has_more": offset + limit < len(funcs),
+        }
+
     @mcp.tool(name="_export_types", annotations=ANNO_READ_ONLY, tags={"internal"})
     @session.require_open
     def export_types(paths: list[str], archive: str) -> dict:
@@ -535,6 +587,75 @@ def register(mcp: FastMCP) -> None:
         finally:
             src.close()
         return {"added": added, "kept_existing": kept}
+
+
+def _callee_identity(callee) -> str:
+    from re_mcp_ghidra.tools.program_analysis import _resolve_thunk  # noqa: PLC0415
+
+    callee = _resolve_thunk(callee)
+    if callee.isExternal() or not _is_default(callee):
+        return "name:" + str(callee.getName())
+    value, _ = _hash(callee, "fid_full")
+    return "fid:" + value if value else "anon"
+
+
+def function_signature(func) -> dict[str, Any]:
+    """The feature vector match_functions(algorithm="fuzzy") scores."""
+    import hashlib  # noqa: PLC0415
+
+    from ghidra.util.task import TaskMonitor  # noqa: PLC0415
+
+    from re_mcp_ghidra.tools.program_analysis import _blocks, _normalised  # noqa: PLC0415
+
+    program = session.program
+    listing = program.getListing()
+    refs = program.getReferenceManager()
+    lines = _normalised(func)
+    insns = list(listing.getInstructions(func.getBody(), True))
+    position = {i.getAddress().getOffset(): n for n, i in enumerate(insns)}
+    blocks, succ, _ = _blocks(func)
+    block_hashes = []
+    for block in blocks:
+        start = position.get(block.getFirstStartAddress().getOffset())
+        if start is None:
+            continue
+        end = start
+        while end < len(insns) and block.contains(insns[end].getAddress()):
+            end += 1
+        text = "\n".join(lines[start:end]).encode()
+        block_hashes.append(hashlib.sha1(text, usedforsecurity=False).hexdigest()[:16])
+
+    strings, constants = set(), set()
+    for insn in insns:
+        for ref in refs.getReferencesFrom(insn.getAddress()):
+            data = listing.getDefinedDataAt(ref.getToAddress())
+            if data is not None and data.hasStringValue():
+                strings.add(str(data.getValue())[:200])
+        for op in range(insn.getNumOperands()):
+            scalar = insn.getScalar(op)
+            if scalar is None or insn.getOperandReferences(op):
+                continue
+            value = int(scalar.getValue())
+            if (
+                1 < abs(value) < 0x10000
+                and "SP" not in str(insn.getDefaultOperandRepresentation(op)).upper()
+            ):
+                constants.add(value)
+
+    callees = sorted(_callee_identity(c) for c in func.getCalledFunctions(TaskMonitor.DUMMY))
+    return {
+        "address": format_address(func.getEntryPoint().getOffset()),
+        "name": str(func.getName()),
+        "is_default_name": _is_default(func),
+        "instructions": len(insns),
+        "blocks": len(blocks),
+        "edges": sum(len(x) for x in succ),
+        "calls": len(callees),
+        "callees": callees,
+        "strings": sorted(strings),
+        "constants": sorted(constants),
+        "block_hashes": sorted(block_hashes),
+    }
 
 
 def _is_builtin(dt) -> bool:

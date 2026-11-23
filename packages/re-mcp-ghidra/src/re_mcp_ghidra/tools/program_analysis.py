@@ -743,6 +743,17 @@ def register(mcp: FastMCP) -> None:
             truncated=bool(queue) and len(steps) >= max_steps,
         )
 
+    @mcp.tool(name="_normalized_instructions", annotations=ANNO_READ_ONLY, tags={"internal"})
+    @session.require_open
+    def normalized_instructions(address: str) -> dict:
+        """Internal: a function's normalised instruction lines (for cross-database diffs)."""
+        func = resolve_function(address)
+        return {
+            "address": format_address(func.getEntryPoint().getOffset()),
+            "name": str(func.getName()),
+            "lines": _normalised(func),
+        }
+
     @mcp.tool(annotations=ANNO_READ_ONLY, tags={"functions"})
     @session.require_open
     def diff_functions(address_a: Address, address_b: Address) -> DiffResult:

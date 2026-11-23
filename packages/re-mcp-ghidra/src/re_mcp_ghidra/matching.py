@@ -35,15 +35,33 @@ DEFAULT_MAX_FUNCTIONS = 2000
 FIELDS = ("name", "prototype", "plate", "comments", "labels", "locals", "tags", "no_return")
 
 Algorithm = Annotated[
-    Literal["fid_specific", "fid_full", "exact_instructions", "exact_bytes", "exact_mnemonics"],
+    Literal[
+        "fid_specific", "fid_full", "exact_instructions", "exact_bytes", "exact_mnemonics", "fuzzy"
+    ],
     Field(
         description=(
-            "Hash used to match. fid_specific (default) keeps operand constants: fewest false "
+            "How to match. fid_specific (default) keeps operand constants: fewest false "
             "matches. fid_full masks constants, so it also matches code relinked at other "
-            'addresses. exact_bytes requires identical bytes. Example: "fid_full"'
+            "addresses. exact_bytes requires identical bytes. fuzzy: exact fid_specific "
+            "matches first, then the rest by similarity score (changed functions; review "
+            'the scores). Example: "fid_full"'
         )
     ),
 ]
+Threshold = Annotated[
+    float,
+    Field(
+        ge=0.3,
+        le=1.0,
+        description="fuzzy: lowest similarity score (0-1) accepted. Example: 0.75",
+    ),
+]
+SIG_PAGE = 2000
+# A fuzzy pair is kept only if it beats the next-best candidate for either side
+# by this much; close calls are left unmatched rather than guessed.
+FUZZY_MARGIN = 0.05
+DEFAULT_THRESHOLD = 0.75
+MAX_DIFF_OPS = 500
 SourceDb = Annotated[
     str, Field(description='Database to copy from (the documented one). Example: "app_v1"')
 ]
@@ -117,6 +135,162 @@ def match_unique(source: list[dict], target: list[dict]) -> tuple[list[dict], in
     return matches, ambiguous, too_small
 
 
+def _ratio(a: float, b: float) -> float:
+    return 1.0 if a == b else 1.0 - abs(a - b) / max(a, b)
+
+
+def _jaccard(a: list, b: list) -> float | None:
+    sa, sb = set(a), set(b)
+    if not sa and not sb:
+        return None
+    return len(sa & sb) / len(sa | sb)
+
+
+def _multiset_overlap(a: list, b: list) -> float:
+    if not a and not b:
+        return 1.0
+    from collections import Counter  # noqa: PLC0415
+
+    ca, cb = Counter(a), Counter(b)
+    return sum((ca & cb).values()) / max(len(a), len(b))
+
+
+def similarity(a: dict, b: dict) -> float:
+    """0-1 similarity of two function signatures (export_function_signatures).
+
+    Shape counts (25%), callee/string/constant sets (45%, over the sets either
+    side has) and address-free block hashes (30%). With no sets on either side
+    the set share moves to the other two, so leaf functions can still match.
+    """
+    numeric = (
+        0.35 * _ratio(a["instructions"], b["instructions"])
+        + 0.25 * _ratio(a["blocks"], b["blocks"])
+        + 0.20 * _ratio(a["edges"], b["edges"])
+        + 0.20 * _ratio(a["calls"], b["calls"])
+    )
+    parts = [
+        (0.5, _jaccard(a["callees"], b["callees"])),
+        (0.3, _jaccard(a["strings"], b["strings"])),
+        (0.2, _jaccard(a["constants"], b["constants"])),
+    ]
+    present = [(w, v) for w, v in parts if v is not None]
+    structural = _multiset_overlap(a["block_hashes"], b["block_hashes"])
+    if not present:
+        return round(0.4 * numeric + 0.6 * structural, 4)
+    sets = sum(w * v for w, v in present) / sum(w for w, _ in present)
+    return round(0.25 * numeric + 0.45 * sets + 0.30 * structural, 4)
+
+
+def match_fuzzy(
+    source: list[dict], target: list[dict], threshold: float, margin: float = FUZZY_MARGIN
+) -> list[dict]:
+    """One-to-one fuzzy matches, best score first, each clearly ahead of its rivals."""
+    target_sorted = sorted(target, key=lambda t: t["instructions"])
+    sizes = [t["instructions"] for t in target_sorted]
+    import bisect  # noqa: PLC0415
+
+    scored: list[tuple[float, int, int]] = []
+    best_for: dict[tuple[str, int], list[float]] = defaultdict(list)
+    for si, s_sig in enumerate(source):
+        n = s_sig["instructions"]
+        lo = bisect.bisect_left(sizes, n / 2)
+        hi = bisect.bisect_right(sizes, n * 2)
+        for ti in range(lo, hi):
+            score = similarity(s_sig, target_sorted[ti])
+            if score >= threshold:
+                scored.append((score, si, ti))
+                best_for[("s", si)].append(score)
+                best_for[("t", ti)].append(score)
+
+    def runner_up(key: tuple[str, int]) -> float:
+        values = sorted(best_for[key], reverse=True)
+        return values[1] if len(values) > 1 else 0.0
+
+    taken_s, taken_t, out = set(), set(), []
+    for score, si, ti in sorted(scored, reverse=True):
+        if si in taken_s or ti in taken_t:
+            continue
+        second = max(runner_up(("s", si)), runner_up(("t", ti)))
+        if score - second < margin and second > 0:
+            continue
+        taken_s.add(si)
+        taken_t.add(ti)
+        s_sig, t_sig = source[si], target_sorted[ti]
+        out.append(
+            {
+                "source": {"address": s_sig["address"], "name": s_sig["name"]},
+                "target": {
+                    "address": t_sig["address"],
+                    "name": t_sig["name"],
+                    "is_default_name": t_sig["is_default_name"],
+                },
+                "score": score,
+                "second_best": second,
+                "method": "fuzzy",
+            }
+        )
+    return out
+
+
+async def _signatures(pool, database: str, names: str) -> list[dict]:
+    items: list[dict] = []
+    offset = 0
+    while True:
+        page = await _call(
+            pool,
+            database,
+            "export_function_signatures",
+            {"names": names, "offset": offset, "limit": SIG_PAGE},
+        )
+        items.extend(page["items"])
+        if not page.get("has_more"):
+            return items
+        offset += SIG_PAGE
+
+
+async def find_matches(
+    pool,
+    source_db: str,
+    target_db: str,
+    algorithm: str,
+    source_names: str,
+    target_names: str,
+    threshold: float,
+) -> dict:
+    """Exact (unique-hash) matches, plus fuzzy ones for algorithm="fuzzy"."""
+    exact_algo = "fid_specific" if algorithm == "fuzzy" else algorithm
+    source = await _hashes(pool, source_db, exact_algo, source_names)
+    target = await _hashes(pool, target_db, exact_algo, target_names)
+    matches, ambiguous, too_small = match_unique(source, target)
+    for m in matches:
+        m["method"] = "exact"
+    fuzzy_count = 0
+    if algorithm == "fuzzy":
+        done_s = {m["source"]["address"] for m in matches}
+        done_t = {m["target"]["address"] for m in matches}
+        s_sigs = [
+            x
+            for x in await _signatures(pool, source_db, source_names)
+            if x["address"] not in done_s
+        ]
+        t_sigs = [
+            x
+            for x in await _signatures(pool, target_db, target_names)
+            if x["address"] not in done_t
+        ]
+        fuzzy = match_fuzzy(s_sigs, t_sigs, threshold)
+        fuzzy_count = len(fuzzy)
+        matches = sorted(matches + fuzzy, key=lambda m: m["target"]["address"])
+    return {
+        "matches": matches,
+        "ambiguous": ambiguous,
+        "too_small": too_small,
+        "source_hashed": len(source),
+        "target_hashed": len(target),
+        "fuzzy": fuzzy_count,
+    }
+
+
 def register_matching_tools(mcp: FastMCP, pool: WorkerPoolProvider) -> None:
     @mcp.tool(annotations={"title": "Match Functions", "readOnlyHint": True})
     async def match_functions(
@@ -131,32 +305,44 @@ def register_matching_tools(mcp: FastMCP, pool: WorkerPoolProvider) -> None:
             Literal["all", "named", "unnamed"],
             Field(description='Which target functions to match. Example: "unnamed"'),
         ] = "all",
+        threshold: Threshold = DEFAULT_THRESHOLD,
         offset: Annotated[int, Field(ge=0, description="Skip this many matches. Example: 0")] = 0,
         limit: Annotated[
             int, Field(ge=1, le=5000, description="Most matches to return. Example: 200")
         ] = 200,
     ) -> dict:
-        """Find the same functions in two open databases by hash (e.g. two builds).
+        """Find the same functions in two open databases (e.g. two builds).
 
         Read-only. Use before propagate_documentation to see what would match.
-        A hash counts only when it occurs exactly once in each database; repeated
-        hashes are counted in ambiguous and never matched. Returns {algorithm,
-        matched, matches: [{source: {address, name}, target: {address, name,
-        is_default_name}, hash}] (one page, by target address), has_more,
-        ambiguous, source_too_small, source_hashed, target_hashed}.
+        A hash counts only when it occurs exactly once in each database;
+        repeated hashes are counted in ambiguous and never matched. fuzzy adds
+        one-to-one similarity matches for the rest, each at least threshold and
+        clearly ahead of its next-best candidate. Returns {algorithm, matched,
+        fuzzy, matches: [{source: {address, name}, target: {address, name,
+        is_default_name}, method, hash | score, second_best}] (one page, by
+        target address), has_more, ambiguous, source_too_small, source_hashed,
+        target_hashed}.
         """
-        source = await _hashes(pool, source_database, algorithm, source_names)
-        target = await _hashes(pool, target_database, algorithm, target_names)
-        matches, ambiguous, too_small = match_unique(source, target)
+        found = await find_matches(
+            pool,
+            source_database,
+            target_database,
+            algorithm,
+            source_names,
+            target_names,
+            threshold,
+        )
+        matches = found["matches"]
         return {
             "algorithm": algorithm,
             "matched": len(matches),
+            "fuzzy": found["fuzzy"],
             "matches": matches[offset : offset + limit],
             "has_more": offset + limit < len(matches),
-            "ambiguous": ambiguous,
-            "source_too_small": too_small,
-            "source_hashed": len(source),
-            "target_hashed": len(target),
+            "ambiguous": found["ambiguous"],
+            "source_too_small": found["too_small"],
+            "source_hashed": found["source_hashed"],
+            "target_hashed": found["target_hashed"],
         }
 
     @mcp.tool(annotations={"title": "Propagate Documentation"})
@@ -202,22 +388,23 @@ def register_matching_tools(mcp: FastMCP, pool: WorkerPoolProvider) -> None:
             int,
             Field(ge=1, le=20000, description="Most matches to apply. Example: 2000"),
         ] = DEFAULT_MAX_FUNCTIONS,
+        threshold: Threshold = DEFAULT_THRESHOLD,
     ) -> dict:
         """Copy names, prototypes and comments to the matching functions of another database.
 
         Use when a new build or a related binary contains functions you already
-        documented. Matches named source functions by hash (unique on both sides,
-        as match_functions), copies the data types their prototypes and locals
+        documented. Matches named source functions as match_functions does (by
+        unique hash, or also by similarity with algorithm="fuzzy"), copies the data types their prototypes and locals
         use, then applies everything to the target as ONE change: one undo step
         "MCP: propagate from <source>"; any error rolls all of it back. Save the
         target afterwards. Returns {matched, applied: {field: count}, skipped:
         [{address, field, reason}], types_added, ambiguous, dry_run, undo_name,
         revision}.
         """
-        source = await _hashes(pool, source_database, algorithm, "named")
-        target = await _hashes(pool, target_database, algorithm, "all")
-        matches, ambiguous, _ = match_unique(source, target)
-        matches = matches[:max_functions]
+        found = await find_matches(
+            pool, source_database, target_database, algorithm, "named", "all", threshold
+        )
+        matches, ambiguous = found["matches"][:max_functions], found["ambiguous"]
         if not matches:
             return {
                 "matched": 0,
@@ -280,6 +467,7 @@ def register_matching_tools(mcp: FastMCP, pool: WorkerPoolProvider) -> None:
         imported, report = result["results"]
         return {
             "matched": len(matches),
+            "fuzzy": found["fuzzy"],
             "applied": report["applied"],
             "skipped": report["skipped"],
             "types_added": imported["added"],
@@ -287,4 +475,45 @@ def register_matching_tools(mcp: FastMCP, pool: WorkerPoolProvider) -> None:
             "dry_run": dry_run,
             "undo_name": result.get("undo_name"),
             "revision": result.get("revision"),
+        }
+
+    @mcp.tool(annotations={"title": "Diff Functions Across Databases", "readOnlyHint": True})
+    async def diff_functions_across(
+        database_a: Annotated[str, Field(description='First database. Example: "app_v1"')],
+        address_a: Annotated[
+            str, Field(description='Function in database_a. Example: "parse_packet"')
+        ],
+        database_b: Annotated[str, Field(description='Second database. Example: "app_v2"')],
+        address_b: Annotated[str, Field(description='Function in database_b. Example: "0x401230"')],
+    ) -> dict:
+        """Diff a function in one database against one in another.
+
+        Use after match_functions to see what changed between builds (a fuzzy
+        match, or a patched copy); diff_functions compares two functions within
+        one database. Branch targets become instruction indexes and calls become
+        callee names, so moved code compares equal. Returns {a, b, similarity,
+        a_instructions, b_instructions, ops: [{kind, a, b}], truncated}.
+        """
+        import difflib  # noqa: PLC0415
+
+        a = await _call(pool, database_a, "_normalized_instructions", {"address": address_a})
+        b = await _call(pool, database_b, "_normalized_instructions", {"address": address_b})
+        la, lb = a["lines"], b["lines"]
+        matcher = difflib.SequenceMatcher(a=la, b=lb, autojunk=False)
+        ops = [
+            {
+                "kind": tag,
+                "a": la[i1:i2] if tag != "equal" else [f"... {i2 - i1} equal"],
+                "b": lb[j1:j2] if tag != "equal" else [],
+            }
+            for tag, i1, i2, j1, j2 in matcher.get_opcodes()
+        ]
+        return {
+            "a": {"database": database_a, "address": a["address"], "name": a["name"]},
+            "b": {"database": database_b, "address": b["address"], "name": b["name"]},
+            "similarity": round(matcher.ratio(), 4),
+            "a_instructions": len(la),
+            "b_instructions": len(lb),
+            "ops": ops[:MAX_DIFF_OPS],
+            "truncated": len(ops) > MAX_DIFF_OPS,
         }

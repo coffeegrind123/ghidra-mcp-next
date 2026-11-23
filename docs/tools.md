@@ -139,6 +139,7 @@ signature and documentation.
 | `call` | yes | Call any tool by name, including hidden tools not in the client tool list. |
 | `close_database` | yes | Close a database and stop its worker process. |
 | `create_repository` |  | Create a repository on a Ghidra Server; the configured user becomes its admin. |
+| `diff_functions_across` |  | Diff a function in one database against one in another. |
 | `execute` | yes | Run Python 3 against the open program, in ONE transaction. |
 | `list_databases` | yes | List the databases open in this server. |
 | `list_project_files` | yes | List the folders and files stored in an existing Ghidra project. |
@@ -147,7 +148,7 @@ signature and documentation.
 | `list_repository_files` |  | List every folder and versioned file in a Ghidra Server repository. |
 | `list_server_users` |  | List the user accounts on a Ghidra Server. |
 | `list_targets` | yes | List the processor languages and compiler specs this Ghidra supports. |
-| `match_functions` |  | Find the same functions in two open databases by hash (e.g. two builds). |
+| `match_functions` |  | Find the same functions in two open databases (e.g. two builds). |
 | `open_database` | yes | Open a binary, or a program in an existing Ghidra project. |
 | `propagate_documentation` |  | Copy names, prototypes and comments to the matching functions of another database. |
 | `save_database` | yes | Write the program's changes to its Ghidra project on disk. |
@@ -160,6 +161,7 @@ signature and documentation.
 | Tool | Listed | What it does |
 |---|---|---|
 | `apply_function_documentation` |  | Apply exported function documentation to functions in this database. |
+| `export_function_signatures` |  | Export per-function features for fuzzy matching against another database. |
 | `get_function_documentation` |  | Export everything that documents one function, as data. |
 | `get_function_hashes` |  | Hash functions to recognise the same code in another build or binary. |
 
