@@ -125,7 +125,10 @@ class DataflowResult(BaseModel):
     direction: str = Field(description="backward (definitions) or forward (uses).")
     steps: list[FlowStep] = Field(description="Operations reached, breadth first.")
     stops: list[str] = Field(
-        description="Why branches ended: constant, input (parameter/register at entry), call."
+        description=(
+            "Why branches ended: constant, input (parameter/register at entry), call, "
+            "no_definition (a global or memory value not computed in this function)."
+        )
     )
     truncated: bool = Field(description="Stopped at max_steps.")
 
@@ -716,7 +719,11 @@ def register(mcp: FastMCP) -> None:
                     stops.add("input")
                     continue
                 op = vn.getDef()
-                if op is None or op.getSeqnum() in seen:
+                if op is None:
+                    # Not computed in this function: a global or memory value.
+                    stops.add("no_definition")
+                    continue
+                if op.getSeqnum() in seen:
                     continue
                 seen.add(op.getSeqnum())
                 steps.append(_step(op, depth))
