@@ -62,8 +62,21 @@ plus `lzma_crc32` and `get_progress`.
   in `matching.py`), keeping accepted exact seeds. Re-measured with the cut in
   the server: 238 pairs, 3 wrong, 0.987 / 0.880 (large gap); 245 pairs, 3 wrong,
   0.988 / 0.818 (close pair). Precision up, recall unchanged.
-- `vt` (exact seeds, then `combined_reference`) is only as good as its seeds:
+- `vt` (exact seeds, then `combined_reference`) was only as good as its seeds:
   4% recall across the large gap, where few functions are byte-identical.
+  **Seeding also from `symbol_name`** (identical names: the exported functions)
+  fixed that. Re-measured, vt / bsim precision / recall:
+
+  | Pair | vt before | vt after | bsim before | bsim after |
+  |---|---|---|---|---|
+  | 5.4.1 -> 5.8.1 | 1.000 / 0.041 | 1.000 / 0.390 | 0.987 / 0.880 | 0.988 / 0.899 |
+  | 5.8.1 -> 5.8.4 | 1.000 / 0.233 | 1.000 / 0.493 | 0.988 / 0.818 | 0.996 / 0.831 |
+
+  vt now beats fuzzy on both pairs (precision 1.000 vs 0.986 / 1.000; recall
+  1.4x and 2.2x). It is not made the default: it opens a VT session on the
+  target, which clears the target's undo history, and two library pairs are a
+  small sample. bsim still misses the precision rule on the close pair (0.996 vs
+  1.000).
 - `auto_version_track` is the most precise way to carry names automatically, but
   it applies markup on its own judgement (2 wrong of 132 on the close pair).
 
