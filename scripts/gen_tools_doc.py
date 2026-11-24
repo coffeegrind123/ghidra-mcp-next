@@ -40,6 +40,15 @@ async def main() -> None:
     async with Client(StdioTransport(str(exe), [], env=full)) as client:
         tools = await client.list_tools()
 
+    # Without a started worker the catalog holds only the supervisor's tools;
+    # writing that would silently drop most of the document.
+    names = {t.name for t in tools}
+    if "decompile_function" not in names or len(names) < 100:
+        raise SystemExit(
+            f"Catalog has {len(names)} tools and no worker tools; is GHIDRA_INSTALL_DIR "
+            "set and the machine idle enough for the worker to start? docs/tools.md unchanged."
+        )
+
     groups: dict[str, list] = {}
     for tool in sorted(tools, key=lambda t: t.name):
         if tool.name.startswith("_"):
