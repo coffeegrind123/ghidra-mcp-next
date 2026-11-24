@@ -85,11 +85,13 @@ jobs:
           RE_MCP_LOG_DIR: ${{ runner.temp }}/worker-logs
           GHIDRA_MCP_LOG_LEVEL: INFO
           RE_MCP_LOG_LEVEL: INFO
+          # A worker whose call runs 5 minutes dumps its Python and Java stacks to its log.
+          GHIDRA_MCP_STALL_DUMP_S: "300"
         run: |
           export GHIDRA_INSTALL_DIR="$(ls -d ~/ghidra/ghidra_*_PUBLIC)"
           mkdir -p "$RE_MCP_LOG_DIR"
           # A hang leaves nothing in the log before the job timeout cancels it.
-          # At 12 minutes (a full run takes about 6), dump every JVM's threads, the Python stacks and the
+          # At 12 minutes (a full run takes about 6), dump the processes, the Python stacks and the
           # tail of each worker's stderr, while the processes still exist.
           (
             uv tool install -q py-spy >/dev/null 2>&1 || true
@@ -98,16 +100,12 @@ jobs:
             free -m
             ps -eo pid,ppid,rss,etimes,stat,args --sort=pid | cut -c1-220
             sudo dmesg -T | grep -iE "killed process|out of memory|oom" | tail -n 20 || true
-            for pid in $(jcmd -l | awk '$2 != "jdk.jcmd/sun.tools.jcmd.JCmd" {print $1}'); do
-              echo "== JVM $pid: $(tr '\0' ' ' < /proc/$pid/cmdline | cut -c1-200)"
-              jcmd "$pid" Thread.print || true
-            done
             # Workers run as "python -m re_mcp_ghidra.server".
             for pid in $(pgrep -f 're-mcp-ghidra|re_mcp_ghidra.server|pytest'); do
               echo "== py-spy $pid"
               sudo "$HOME/.local/bin/py-spy" dump --pid "$pid" || true
             done
-            for f in "$RE_MCP_LOG_DIR"/*; do echo "== $f"; tail -n 80 "$f"; done
+            for f in "$RE_MCP_LOG_DIR"/*; do echo "== $f"; tail -n 400 "$f"; done
             echo "::endgroup::"
           ) &
           uv run pytest tests/live -m live -v
