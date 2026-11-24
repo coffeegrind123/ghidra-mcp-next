@@ -87,12 +87,15 @@ jobs:
           export GHIDRA_INSTALL_DIR="$(ls -d ~/ghidra/ghidra_*_PUBLIC)"
           mkdir -p "$RE_MCP_LOG_DIR"
           # A hang leaves nothing in the log before the job timeout cancels it.
-          # At 22 minutes, dump every JVM's threads, the Python stacks and the
+          # At 12 minutes (a full run takes about 6), dump every JVM's threads, the Python stacks and the
           # tail of each worker's stderr, while the processes still exist.
           (
             uv tool install -q py-spy >/dev/null 2>&1 || true
-            sleep 1320
+            sleep 720
             echo "::group::hang diagnostics"
+            free -m
+            ps -eo pid,ppid,rss,etimes,stat,args --sort=pid | cut -c1-220
+            sudo dmesg -T | grep -iE "killed process|out of memory|oom" | tail -n 20 || true
             for pid in $(jcmd -l | awk '$2 != "jdk.jcmd/sun.tools.jcmd.JCmd" {print $1}'); do
               echo "== JVM $pid: $(tr '\0' ' ' < /proc/$pid/cmdline | cut -c1-200)"
               jcmd "$pid" Thread.print || true
