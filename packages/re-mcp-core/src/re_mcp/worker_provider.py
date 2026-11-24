@@ -139,7 +139,7 @@ def _enrich_spawn_error(exc: BaseException, label: str = "bootstrap") -> str:
     detail = (
         f"worker stderr: {resolved}"
         if resolved
-        else "set the LOG_DIR env var to capture worker stderr for diagnosis"
+        else "set the RE_MCP_LOG_DIR env var to capture worker stderr for diagnosis"
     )
     return f"{msg} (worker subprocess exited unexpectedly during spawn; {detail})"
 
@@ -1779,7 +1779,7 @@ class WorkerPoolProvider(Provider):
             if worker.state == WorkerState.DEAD:
                 return
             stderr_hint = (
-                resolve_log_file(f"worker-{db_id}", suffix=".stderr") or "<LOG_DIR not set>"
+                resolve_log_file(f"worker-{db_id}", suffix=".stderr") or "<RE_MCP_LOG_DIR not set>"
             )
             log.warning(
                 "Worker %s (pid=%d) exited unexpectedly (%s); check stderr: %s",
