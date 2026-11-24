@@ -88,9 +88,11 @@ CorrelatorName = Literal[
     "combined_reference",
     "bsim",
 ]
-# Correlators that compare code or data directly; their unique matches are the
-# seeds the reference and BSim correlators build on.
-SEED_CORRELATORS = ("exact_bytes", "exact_instructions", "exact_mnemonics")
+# Correlators whose one-to-one matches seed the reference and BSim correlators:
+# identical code, plus identical symbol names (exported functions). Adding
+# symbol_name raised vt's recall from 0.04 to 0.39 and from 0.23 to 0.49 on the
+# two liblzma pairs at precision 1.0 (context/matching-measurements.md).
+SEED_CORRELATORS = ("exact_bytes", "exact_instructions", "exact_mnemonics", "symbol_name")
 MATCH_ALGORITHMS = {
     "vt": (*SEED_CORRELATORS, "duplicate_function", "combined_reference"),
     "bsim": (*SEED_CORRELATORS, "bsim"),
@@ -868,7 +870,7 @@ def register(mcp: FastMCP) -> None:
     ) -> dict:
         """Internal: match_functions(algorithm=vt|bsim) in an open session.
 
-        Runs the exact correlators, accepts their one-to-one function pairs as
+        Runs the exact and symbol-name correlators, accepts their one-to-one function pairs as
         seeds (VT session status only, no markup), then the reference or BSim
         correlator, and returns the one-to-one function pairs.
         """
