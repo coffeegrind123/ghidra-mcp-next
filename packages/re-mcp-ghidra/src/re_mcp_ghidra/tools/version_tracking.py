@@ -357,6 +357,7 @@ def correlate(
     runs = []
     monitor = _monitor(timeout_s)
     for name in names:
+        _settle_accepted_cache(live.vt)
         start = time.time()
         factory = _factory(name)
         opts = factory.createDefaultOptions()
@@ -588,6 +589,42 @@ def _association(live: _Live, src_addr, dst_addr):
     return manual.addMatch(info).getAssociation(), True
 
 
+def _settle_accepted_cache(vt) -> None:
+    """Reload VT's accepted-association cache now, outside any lock.
+
+    Ghidra 12.2 bug: AcceptedStatusCache.isBlocked holds the session's read
+    lock and, when the cache was invalidated (any undo or rolled-back
+    transaction) and accepted associations exist, reloads it there; the
+    reload's add() then takes the write lock. ReentrantReadWriteLock never
+    upgrades read to write, so the thread waits forever, and no TaskMonitor
+    is checked. It fires when a NEW association is created after an undo:
+    a correlator's new match or a manual match. Measured in CI (stack dump)
+    and reproduced locally on 12.2. Loading the cache here, with no lock
+    held, leaves isBlocked nothing to reload. Before 12.2 the lock is a
+    plain reentrant mutex and this is a harmless reload.
+    """
+    from ghidra.util.task import TaskMonitor  # noqa: PLC0415
+
+    try:
+        manager = vt.getAssociationManagerDBM()
+        field = manager.getClass().getDeclaredField("acceptedStatusCache")
+        field.setAccessible(True)
+        cache = field.get(manager)
+        invalid = cache.getClass().getDeclaredField("invalid")
+        invalid.setAccessible(True)
+        if not invalid.getBoolean(cache):
+            return
+        load = cache.getClass().getDeclaredMethod("doLoadAcceptedAssociations", TaskMonitor.class_)
+        load.setAccessible(True)
+        load.invoke(cache, TaskMonitor.DUMMY)
+    except Exception:
+        log.warning(
+            "Cannot reload VT's accepted-association cache; on Ghidra 12.2 a new "
+            "association after an undo can hang",
+            exc_info=True,
+        )
+
+
 def _markup_items(assoc):
     """The association's markup items, recomputed from the session database.
 
@@ -616,6 +653,7 @@ def accept_and_apply(
     from ghidra.feature.vt.api.main import VTAssociationStatus  # noqa: PLC0415
     from ghidra.feature.vt.api.util import VersionTrackingApplyException  # noqa: PLC0415
 
+    _settle_accepted_cache(live.vt)
     opts = _options(fields, overwrite)
     applied: dict[str, int] = {}
     skipped: list[dict] = []
@@ -683,6 +721,7 @@ def auto(live: _Live, options: dict[str, Any], timeout_s: int) -> dict:
                 f"Auto Version Tracking option {key!r} needs a bool or number, got {value!r}.",
                 error_type="InvalidArguments",
             )
+    _settle_accepted_cache(live.vt)
     before = _status_counts(live)
     task = AutoVersionTrackingTask(live.vt, opts)
     start = time.time()

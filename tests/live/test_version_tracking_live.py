@@ -25,7 +25,8 @@ async def _scenario(work: Path) -> dict[str, Any]:
     supervisor = Path(sys.executable).with_name("re-mcp-ghidra")
     env = {**os.environ, "GHIDRA_INSTALL_DIR": GHIDRA}
     out: dict[str, Any] = {}
-    async with Client(StdioTransport(str(supervisor), [], env=env), timeout=1800) as client:
+    # A hung call fails at 10 minutes instead of eating the CI job's 30.
+    async with Client(StdioTransport(str(supervisor), [], env=env), timeout=600) as client:
 
         async def call(name: str, /, **args: Any) -> dict[str, Any]:
             result = await client.call_tool(name, args, raise_on_error=False)
@@ -141,6 +142,22 @@ async def _scenario(work: Path) -> dict[str, Any]:
             dst, "version_track_matches", session_name="s1", status="accepted"
         )
         out["bulk"] = await tool(dst, "apply_version_tracking", session_name="s1", fields=[])
+        # After an undo (cache invalidated) with accepted matches present, creating a NEW
+        # association hung forever on Ghidra 12.2: its accepted-status cache reloads under
+        # a read lock and then takes the write lock (read -> write upgrade never granted).
+        paired = {r["destination"] for r in out["all"]["items"] if r["source"] == addr}
+        other = next(
+            p["destination"]
+            for p in out["best"]["items"]
+            if p["destination"] not in paired and not p["destination"].startswith("EXTERNAL:")
+        )
+        out["new_after_undo"] = await tool(
+            dst,
+            "apply_version_tracking",
+            session_name="s1",
+            pairs=[{"source": addr, "destination": other}],
+            fields=[],
+        )
         out["ref"] = await tool(
             dst, "version_track_correlate", session_name="s1", correlators=["combined_reference"]
         )
@@ -250,6 +267,14 @@ def test_imports_keep_their_address_space(run):
     for algorithm in ("vt", "bsim"):
         found = run[f"match_{algorithm}"]["matches"]
         assert not [m for m in found if ":" in m["target"]["address"]]
+
+
+def test_new_association_after_undo_does_not_hang(run):
+    new = run["new_after_undo"]
+    assert not new.get("is_error"), new
+    assert new["manual_matches"] == 1
+    # Both functions are already in accepted matches, so VT blocks the new pair.
+    assert new["accepted"] == 0 and "cannot accept" in new["skipped"][0]["reason"]
 
 
 def test_bulk_accept_then_reference_correlator(run):
