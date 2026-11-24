@@ -92,7 +92,7 @@ Ported:
 Found while testing 12.2 (not from either repo): Ghidra 12.2 clients reject a Ghidra
 Server's self-issued certificate; GHIDRA_MCP_SERVER_CACERTS / _TRUST_LOOPBACK (bf97d1c).
 
-Left: Version Tracking run
-inside the destination worker (source opened read-only from its saved project) and BSim
-as a fuzzy engine, both gated on the precision/recall measurement in the spec §3.5;
-MAYBE items in the spec.
+| Version Tracking inside the destination worker (source read-only from its saved project): version_track, version_track_correlate, version_track_matches (one-to-one best view), apply_version_tracking, auto_version_track, close_version_track; match_functions algorithm vt / bsim (BSim pairs under confidence 10 dropped). Measured facts in design.md "Version Tracking"; numbers in matching-measurements.md (fuzzy stays the default) | 89e4fdc |
+
+Left: MAYBE items in the spec; a Ghidra Server (shared) VT source; a cross-compiler
+pair and a large library for the §3.5 numbers.

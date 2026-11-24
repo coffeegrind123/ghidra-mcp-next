@@ -110,3 +110,24 @@ program tree, prototype, decompiler tokens, function ranges). The rename list li
 
 `/mcp-audit` with the code-mode profile; target grade A. Exceptions go in
 `.mcpgraderc.json` with reasons.
+
+## Version Tracking (Ghidra VT)
+
+Measured on Ghidra 12.0.3 and 12.2 (probes p1-p3, 2026-11-23):
+
+| Fact | Consequence |
+|---|---|
+| VT needs both programs in one JVM; a second process cannot `open_project` a locked project, but `DefaultProjectData(locator, False, False)` + `getReadOnlyDomainObject` can, and sees only the SAVED state. | The session lives in the DESTINATION worker; the supervisor saves the source first (`save_source`) or refuses (`UnsavedSource`). |
+| `VTSessionDB(...)` joins the destination's transaction manager (`addSynchronizedDomainObject`). Joining and leaving clear the destination's undo history. | `_vt_open` and `close_version_track` are `NOT_IN_TRANSACTION`; results report `undo_history_cleared`; descriptions say so. |
+| While joined, a destination transaction IS a VT transaction: one undo step covers markup and association status; `undo` reverts both. A rollback reverts both. | Correlate, accept/apply and auto-VT are ordinary atomic write tools (batchable, `dry_run` works). |
+| Shared undo names read `"<file>: <description>"`, one line per object changed; a VT-only step has no program line. | `programmable.step_name` strips it, for `undo`/`redo` and batch's `undo_name`. |
+| A session stores source and destination as file IDs of ONE project; reopening a saved session whose source is in another project fails ("Source program is missing"). | Sessions are in memory, per worker lifetime, released (VT first) before the program closes or reopens (`session.attach`). |
+| Reference correlators find nothing until matches are ACCEPTED. | `match_functions(algorithm="vt"/"bsim")` accepts the one-to-one exact matches as seeds (VT status only, no markup), then runs `combined_reference` / `bsim`. |
+| Ghidra caches markup items per association and clears them only when the association record disappears. After a rollback or undo the record survives, so items still read ADDED and a later apply copied nothing. | `_markup_items` clears that private cache (reflection on `markupManager`) before each read. Test: dry_run, then apply. |
+| AutoVersionTrackingTask runs fine inside our open transaction (one undo step); unset VTOptions take the AutoVersionTrackingScript defaults. | `auto_version_track` = open + `_vt_auto`. |
+| `/bin/true`: BSim correlator ~8.5 s (decompiles every function of both programs); exact correlators < 0.5 s. | `timeout_s` on correlate/auto (TimeoutTaskMonitor); a timeout keeps nothing. |
+
+Not yet measured: a source opened from a Ghidra Server (shared) project. The worker
+reads the shared project's local directory read-only; a versioned file that is not
+checked out may have no local content, in which case `_vt_open` fails with
+`OpenFailed` and the message from Ghidra.
