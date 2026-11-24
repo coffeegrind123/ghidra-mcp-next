@@ -81,6 +81,33 @@ jobs:
             "https://github.com/NationalSecurityAgency/ghidra/releases/download/Ghidra_${{ matrix.ghidra }}_build/${{ matrix.zip }}"
           mkdir -p ~/ghidra && unzip -q /tmp/ghidra.zip -d ~/ghidra
       - name: Live tests
+        env:
+          RE_MCP_LOG_DIR: ${{ runner.temp }}/worker-logs
         run: |
           export GHIDRA_INSTALL_DIR="$(ls -d ~/ghidra/ghidra_*_PUBLIC)"
+          mkdir -p "$RE_MCP_LOG_DIR"
+          # A hang leaves nothing in the log before the job timeout cancels it.
+          # At 22 minutes, dump every JVM's threads, the Python stacks and the
+          # tail of each worker's stderr, while the processes still exist.
+          (
+            uv tool install -q py-spy >/dev/null 2>&1 || true
+            sleep 1320
+            echo "::group::hang diagnostics"
+            for pid in $(jcmd -l | awk '$2 != "jdk.jcmd/sun.tools.jcmd.JCmd" {print $1}'); do
+              echo "== JVM $pid: $(tr '\0' ' ' < /proc/$pid/cmdline | cut -c1-200)"
+              jcmd "$pid" Thread.print || true
+            done
+            for pid in $(pgrep -f 're-mcp-ghidra|pytest'); do
+              echo "== py-spy $pid"
+              sudo "$HOME/.local/bin/py-spy" dump --pid "$pid" || true
+            done
+            for f in "$RE_MCP_LOG_DIR"/*; do echo "== $f"; tail -n 80 "$f"; done
+            echo "::endgroup::"
+          ) &
           uv run pytest tests/live -m live -v
+      - name: Upload worker logs
+        if: failure() || cancelled()
+        uses: actions/upload-artifact@v4
+        with:
+          name: worker-logs-${{ matrix.ghidra }}
+          path: ${{ runner.temp }}/worker-logs
