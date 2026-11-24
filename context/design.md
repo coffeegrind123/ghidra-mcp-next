@@ -127,6 +127,13 @@ Measured on Ghidra 12.0.3 and 12.2 (probes p1-p3, 2026-11-23):
 | AutoVersionTrackingTask runs fine inside our open transaction (one undo step); unset VTOptions take the AutoVersionTrackingScript defaults. | `auto_version_track` = open + `_vt_auto`. |
 | `/bin/true`: BSim correlator ~8.5 s (decompiles every function of both programs); exact correlators < 0.5 s. | `timeout_s` on correlate/auto (TimeoutTaskMonitor); a timeout keeps nothing. |
 
+| Ghidra 12.2 bug: `AcceptedStatusCache.isBlocked` reloads an invalidated cache under the session's read lock, and the reload's `add()` takes the write lock: a read-to-write upgrade `ReentrantReadWriteLock` never grants. Any NEW association after an undo or rollback (a correlator's new match, a manual match) hangs forever without checking the monitor. 12.0/12.1 use a plain reentrant lock. Found by a CI stack dump; reproduced locally. | `_settle_accepted_cache` reloads the cache with no lock held before correlate, accept and auto VT. Test: undo, then a manual match. |
+| Imports are functions in the EXTERNAL space; `symbol_name` pairs them. | VT addresses outside the default space are written and read as `SPACE:offset`; `match_functions` returns only in-memory functions. |
+
+Diagnosing a hung worker: `jcmd` asks the JVM to print its threads on STDOUT, which in a
+worker is the MCP channel, so the worker is lost. Use `GHIDRA_MCP_STALL_DUMP_S` instead
+(Python and Java stacks, with lock owners, to the worker's stderr log).
+
 Not yet measured: a source opened from a Ghidra Server (shared) project. The worker
 reads the shared project's local directory read-only; a versioned file that is not
 checked out may have no local content, in which case `_vt_open` fails with

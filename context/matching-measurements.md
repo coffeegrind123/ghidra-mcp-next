@@ -72,8 +72,13 @@ plus `lzma_crc32` and `get_progress`.
   | 5.4.1 -> 5.8.1 | 1.000 / 0.041 | 1.000 / 0.390 | 0.987 / 0.880 | 0.988 / 0.899 |
   | 5.8.1 -> 5.8.4 | 1.000 / 0.233 | 1.000 / 0.493 | 0.988 / 0.818 | 0.996 / 0.831 |
 
+  Imports were among those name pairs but were never accepted: their EXTERNAL
+  addresses were written as bare offsets and read back as RAM (fixed in 5564399).
+  Accepted as seeds, vt rose again: **1.000 / 0.461** (large gap) and
+  **1.000 / 0.527** (close pair); bsim unchanged (0.988 / 0.899, 0.996 / 0.831).
+
   vt now beats fuzzy on both pairs (precision 1.000 vs 0.986 / 1.000; recall
-  1.4x and 2.2x). It is not made the default: it opens a VT session on the
+  1.7x and 2.4x). It is not made the default: it opens a VT session on the
   target, which clears the target's undo history, and two library pairs are a
   small sample. bsim still misses the precision rule on the close pair (0.996 vs
   1.000).
