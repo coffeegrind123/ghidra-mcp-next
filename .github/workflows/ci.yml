@@ -83,6 +83,8 @@ jobs:
       - name: Live tests
         env:
           RE_MCP_LOG_DIR: ${{ runner.temp }}/worker-logs
+          GHIDRA_MCP_LOG_LEVEL: INFO
+          RE_MCP_LOG_LEVEL: INFO
         run: |
           export GHIDRA_INSTALL_DIR="$(ls -d ~/ghidra/ghidra_*_PUBLIC)"
           mkdir -p "$RE_MCP_LOG_DIR"
@@ -100,7 +102,8 @@ jobs:
               echo "== JVM $pid: $(tr '\0' ' ' < /proc/$pid/cmdline | cut -c1-200)"
               jcmd "$pid" Thread.print || true
             done
-            for pid in $(pgrep -f 're-mcp-ghidra|pytest'); do
+            # Workers run as "python -m re_mcp_ghidra.server".
+            for pid in $(pgrep -f 're-mcp-ghidra|re_mcp_ghidra.server|pytest'); do
               echo "== py-spy $pid"
               sudo "$HOME/.local/bin/py-spy" dump --pid "$pid" || true
             done
