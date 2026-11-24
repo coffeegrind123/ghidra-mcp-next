@@ -16,10 +16,14 @@ All sync tool functions are dispatched to the main thread via
 
 from __future__ import annotations
 
+import faulthandler
 import importlib
 import logging
+import os
 import pkgutil
+import sys
 import threading
+import time
 from collections.abc import Callable
 from typing import Any
 
@@ -101,6 +105,83 @@ class GhidraServer(BackendServer):
 
 
 # ---------------------------------------------------------------------------
+# Stall watchdog
+# ---------------------------------------------------------------------------
+
+STALL_ENV = "GHIDRA_MCP_STALL_DUMP_S"
+STALL_POLL_S = 2.0
+
+
+def _java_threads() -> str:
+    """Every JVM thread's full stack, with the lock it waits on and who holds it.
+
+    ThreadInfo.toString() cuts stacks at 8 frames, so the frames are printed
+    here. Runs on a watchdog thread: JPype releases the GIL while the main
+    thread is inside a Java call, so this works while the main thread is stuck.
+    """
+    from java.lang.management import ManagementFactory  # noqa: PLC0415
+
+    bean = ManagementFactory.getThreadMXBean()
+    lines = []
+    deadlocked = bean.findDeadlockedThreads()
+    if deadlocked is not None:
+        lines.append(f"DEADLOCKED thread ids: {list(deadlocked)}")
+    for info in bean.dumpAllThreads(True, True):
+        head = f'"{info.getThreadName()}" id={info.getThreadId()} {info.getThreadState()}'
+        if info.getLockName() is not None:
+            head += f" on {info.getLockName()}"
+        if info.getLockOwnerName() is not None:
+            head += f' owned by "{info.getLockOwnerName()}" id={info.getLockOwnerId()}'
+        lines.append(head)
+        lines.extend(f"    at {frame}" for frame in info.getStackTrace())
+        lines.extend(
+            f"    - locked {m} (at depth {m.getLockedStackDepth()})"
+            for m in info.getLockedMonitors()
+        )
+        lines.extend(f"    - locked synchronizer {s}" for s in info.getLockedSynchronizers())
+    return "\n".join(lines)
+
+
+def _start_stall_watchdog(executor: MainThreadExecutor) -> None:
+    """When one tool call runs longer than $GHIDRA_MCP_STALL_DUMP_S, dump all stacks once.
+
+    A hung Java call never returns and may never check its TaskMonitor, so
+    nothing reaches the log. Python stacks (faulthandler) and Java stacks go to
+    stderr, which the supervisor writes to the worker's log file when
+    RE_MCP_LOG_DIR is set. Off unless the variable is set; for diagnosis only.
+    """
+    try:
+        limit = float(os.environ.get(STALL_ENV, "0"))
+    except ValueError:
+        log.warning("Ignoring %s=%r: not a number", STALL_ENV, os.environ.get(STALL_ENV))
+        return
+    if limit <= 0:
+        return
+
+    def watch() -> None:
+        dumped_for = None
+        while True:
+            time.sleep(STALL_POLL_S)
+            since = executor.busy_since
+            if since is None or since == dumped_for or time.monotonic() - since < limit:
+                continue
+            dumped_for = since
+            print(
+                f"=== stall: one tool call has run {time.monotonic() - since:.0f}s ===",
+                file=sys.stderr,
+                flush=True,
+            )
+            faulthandler.dump_traceback(file=sys.stderr, all_threads=True)
+            try:
+                print(_java_threads(), file=sys.stderr, flush=True)
+            except Exception:
+                log.exception("Java thread dump failed")
+
+    threading.Thread(target=watch, daemon=True, name="stall-watchdog").start()
+    log.info("Stall watchdog on: dumps stacks after %ss in one call", limit)
+
+
+# ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
 
@@ -146,6 +227,7 @@ def main():
         finally:
             executor.shutdown()
 
+    _start_stall_watchdog(executor)
     mcp_thread = threading.Thread(target=_run_mcp, daemon=True, name="mcp-server")
     mcp_thread.start()
     log.info("MCP server started on daemon thread")

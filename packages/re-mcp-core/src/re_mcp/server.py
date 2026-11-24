@@ -21,6 +21,7 @@ import functools
 import inspect
 import logging
 import queue
+import time
 from collections.abc import Callable
 from typing import Any
 
@@ -51,6 +52,9 @@ class MainThreadExecutor(concurrent.futures.Executor):
 
     def __init__(self) -> None:
         self._queue: queue.Queue = queue.Queue()
+        # monotonic start of the job now running on the main thread, or None;
+        # read by stall watchdogs on other threads.
+        self.busy_since: float | None = None
 
     def submit(
         self, fn: Callable[..., Any], /, *args: Any, **kwargs: Any
@@ -71,6 +75,7 @@ class MainThreadExecutor(concurrent.futures.Executor):
             f, fn = item
             if f.cancelled():
                 continue
+            self.busy_since = time.monotonic()
             try:
                 result = fn()
             except BaseException as e:
@@ -81,6 +86,8 @@ class MainThreadExecutor(concurrent.futures.Executor):
             else:
                 if not f.cancelled():
                     f.set_result(result)
+            finally:
+                self.busy_since = None
 
     def shutdown(self, wait: bool = True, *, cancel_futures: bool = False) -> None:
         self._queue.put(self._SENTINEL)

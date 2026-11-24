@@ -123,6 +123,8 @@ Every tool is listed in [docs/tools.md](docs/tools.md).
 | `GHIDRA_MCP_DISABLE_TOOL_SEARCH` | unset | `1` lists every tool instead of 22 plus search |
 | `GHIDRA_MCP_MAX_WORKERS` | unlimited | Most databases open at once (1-8) |
 | `GHIDRA_MCP_LOG_LEVEL` / `GHIDRA_MCP_LOG_DIR` | `WARNING` / unset | Logging |
+| `RE_MCP_LOG_DIR` | unset | Directory for each worker's stderr log |
+| `GHIDRA_MCP_STALL_DUMP_S` | unset | Diagnosis: when one tool call runs this many seconds, the worker writes every Python and Java thread's stack to its stderr log |
 
 `execute` and `run_ghidra_script` run arbitrary code with the server's
 privileges. The server listens on stdio by default; `serve` binds HTTP to
