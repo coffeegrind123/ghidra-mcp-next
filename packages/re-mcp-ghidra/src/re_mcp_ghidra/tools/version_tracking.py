@@ -239,7 +239,13 @@ def _set_options(opts, short: str, values: dict[str, Any]) -> None:
 
 
 def _address(program, text: str):
-    """Parse an address (hex/decimal) or a function/label name in *program*."""
+    """Parse an address in *program*: hex/decimal, "SPACE:offset" as _fmt writes it
+    for other spaces (imports live in EXTERNAL), or a function/label name."""
+    text = str(text).strip()
+    if ":" in text and not text.lower().startswith("0x"):
+        spaced = program.getAddressFactory().getAddress(text)
+        if spaced is not None:
+            return spaced
     try:
         return (
             program.getAddressFactory()
@@ -256,8 +262,19 @@ def _address(program, text: str):
     )
 
 
-def _fmt(addr) -> str:
-    return format_address(addr.getOffset())
+def _fmt(program, addr) -> str:
+    """Hex for *program*'s default space, Ghidra's "SPACE:offset" for any other.
+
+    Only the offset would turn an import (EXTERNAL:00000001) into RAM 0x1,
+    which then names a different place or nothing.
+    """
+    if addr.getAddressSpace().equals(program.getAddressFactory().getDefaultAddressSpace()):
+        return format_address(addr.getOffset())
+    return str(addr)
+
+
+def _in_memory(program, text: str) -> bool:
+    return _address(program, text).isMemoryAddress()
 
 
 def _name_at(program, addr) -> str:
@@ -391,8 +408,8 @@ def _rows(live: _Live, kind: str) -> list[dict]:
             s_addr, d_addr = assoc.getSourceAddress(), assoc.getDestinationAddress()
             rows.append(
                 {
-                    "source": _fmt(s_addr),
-                    "destination": _fmt(d_addr),
+                    "source": _fmt(src, s_addr),
+                    "destination": _fmt(dst, d_addr),
                     "source_name": _name_at(src, s_addr),
                     "destination_name": _name_at(dst, d_addr),
                     "source_is_default_name": _is_default(src, s_addr),
@@ -606,7 +623,10 @@ def accept_and_apply(
     for s_text, d_text in pairs:
         src_addr = _address(live.source, s_text)
         dst_addr = _address(session.program, d_text)
-        where = {"source": _fmt(src_addr), "destination": _fmt(dst_addr)}
+        where = {
+            "source": _fmt(live.source, src_addr),
+            "destination": _fmt(session.program, dst_addr),
+        }
         assoc, created = _association(live, src_addr, dst_addr)
         if assoc is None:
             skipped.append({**where, "reason": "VT has no such match and one side is no function"})
@@ -885,7 +905,13 @@ def register(mcp: FastMCP) -> None:
         ]
         accept_and_apply(live, seeds, [], "default_only")
         runs += correlate(live, rest, None, True, timeout_s)
-        pairs = best(_rows(live, "function"))
+        # Imports (EXTERNAL space) were seeds; they are not functions of either binary.
+        pairs = [
+            p
+            for p in best(_rows(live, "function"))
+            if _in_memory(live.source, p["source"])
+            and _in_memory(session.program, p["destination"])
+        ]
         return {"runs": runs, "seeds": len(seeds), "pairs": pairs}
 
     @mcp.tool(name="_vt_auto", annotations=ANNO_MUTATE, tags={"internal"})

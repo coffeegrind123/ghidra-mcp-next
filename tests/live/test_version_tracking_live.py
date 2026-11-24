@@ -242,6 +242,16 @@ def test_undo_reverts_markup_and_status(run):
     assert run["undone_accepted"]["total"] == 0
 
 
+def test_imports_keep_their_address_space(run):
+    # symbol_name pairs imports; their addresses must read back as EXTERNAL, not RAM.
+    best = run["best"]["items"]
+    assert any(p["source"].startswith("EXTERNAL:") for p in best)
+    assert not [s for s in run["bulk"]["skipped"] if "no function" in s["reason"]]
+    for algorithm in ("vt", "bsim"):
+        found = run[f"match_{algorithm}"]["matches"]
+        assert not [m for m in found if ":" in m["target"]["address"]]
+
+
 def test_bulk_accept_then_reference_correlator(run):
     bulk = run["bulk"]
     assert not bulk.get("is_error"), bulk
