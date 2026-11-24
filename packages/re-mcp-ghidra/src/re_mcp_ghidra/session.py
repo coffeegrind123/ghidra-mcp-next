@@ -16,6 +16,7 @@ import logging
 import os
 import shutil
 import signal
+from collections.abc import Callable
 
 from re_mcp_ghidra.exceptions import GhidraError
 from re_mcp_ghidra.server_url import GHIDRA_URL_SCHEME, ServerProgram, parse_server_url
@@ -60,6 +61,7 @@ class Session:
         self._project_location = None
         self._current_path: str | None = None
         self._flat_api = None
+        self._attached: dict[str, Callable[[], None]] = {}
         self.capabilities: dict[str, bool] = {}
 
     def is_open(self) -> bool:
@@ -230,6 +232,7 @@ class Session:
         from ghidra.util.task import TaskMonitor  # noqa: PLC0415
 
         path = self._program_path
+        self._release_attached()
         self._dispose_decompiler()
         self._program.release(self._consumer)
         try:
@@ -238,6 +241,27 @@ class Session:
         finally:
             self._program, self._consumer = pyghidra.consume_program(self._project, path)
             self._flat_api = FlatProgramAPI(self._program, TaskMonitor.DUMMY)
+
+    def attach(self, key: str, release: Callable[[], None]) -> None:
+        """Register an object that holds the program (e.g. a Version Tracking session).
+
+        *release* runs before the program is released, on close and on reopen:
+        an object still holding the program as a consumer would keep it open.
+        """
+        self._attached[key] = release
+
+    def detach(self, key: str) -> None:
+        """Release and forget the object registered under *key*."""
+        release = self._attached.pop(key, None)
+        if release is not None:
+            release()
+
+    def _release_attached(self) -> None:
+        for key in list(self._attached):
+            try:
+                self.detach(key)
+            except Exception:
+                log.exception("Error releasing %s", key)
 
     def decompiler(self):
         """The worker's shared decompiler for the open program.
@@ -382,6 +406,7 @@ class Session:
             ) from exc
         finally:
             try:
+                self._release_attached()
                 self._dispose_decompiler()
                 if self._program is not None:
                     self._program.release(self._consumer)

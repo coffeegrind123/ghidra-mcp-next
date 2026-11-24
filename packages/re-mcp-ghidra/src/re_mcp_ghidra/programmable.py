@@ -71,6 +71,9 @@ NOT_IN_TRANSACTION = frozenset(
         "add_to_repository",
         "_batch",
         "_execute",
+        # Version Tracking sessions join/leave the program's transaction manager.
+        "_vt_open",
+        "close_version_track",
     }
 )
 
@@ -151,6 +154,24 @@ def to_json(value: Any) -> Any:
         with contextlib.suppress(Exception):
             return [to_json(v) for v in value]
     return str(value)
+
+
+def step_name(program, raw) -> str:
+    """An undo step's own name.
+
+    While a Version Tracking session is joined to the program, Ghidra names
+    each shared step "<file name>: <description>" per object that changed,
+    one per line ("sample: MCP: apply_version_tracking"). Strip that prefix;
+    a step that changed only the session has no program line and stays "".
+    """
+    prefix = f"{program.getDomainFile().getName()}: "
+    lines = str(raw or "").split("\n")
+    if len(lines) == 1 and not lines[0].startswith(prefix):
+        return lines[0]
+    for line in lines:
+        if line.startswith(prefix):
+            return line[len(prefix) :]
+    return ""
 
 
 def atomic(name: str, fn: Callable[..., Any]) -> Callable[..., Any]:
@@ -295,7 +316,7 @@ def _transaction(label: str, keep: bool):
     finally:
         committed = bool(program.endTransaction(tx, ok and keep))
         state["committed"] = committed
-        if committed and program.getUndoName() == name:
+        if committed and step_name(program, program.getUndoName()) == name:
             state["undo_name"] = name
     if ok and keep and not state["committed"]:
         raise GhidraError(

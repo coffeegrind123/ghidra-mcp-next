@@ -36,7 +36,14 @@ FIELDS = ("name", "prototype", "plate", "comments", "labels", "locals", "tags", 
 
 Algorithm = Annotated[
     Literal[
-        "fid_specific", "fid_full", "exact_instructions", "exact_bytes", "exact_mnemonics", "fuzzy"
+        "fid_specific",
+        "fid_full",
+        "exact_instructions",
+        "exact_bytes",
+        "exact_mnemonics",
+        "fuzzy",
+        "vt",
+        "bsim",
     ],
     Field(
         description=(
@@ -44,7 +51,12 @@ Algorithm = Annotated[
             "matches. fid_full masks constants, so it also matches code relinked at other "
             "addresses. exact_bytes requires identical bytes. fuzzy: exact fid_specific "
             "matches first, then the rest by similarity score (changed functions; review "
-            'the scores). Example: "fid_full"'
+            "the scores). vt: Ghidra Version Tracking, exact correlators as seeds, then "
+            "matches through matched callers, callees and data. bsim: the same seeds, "
+            "then BSim decompiler similarity, pairs under confidence 10 dropped (slow; "
+            "finds about 3x what fuzzy finds, with more wrong pairs). vt and bsim open a Version Tracking "
+            "session on the target, which clears its undo history. "
+            'Example: "fid_full"'
         )
     ),
 ]
@@ -66,6 +78,24 @@ SourceDb = Annotated[
     str, Field(description='Database to copy from (the documented one). Example: "app_v1"')
 ]
 TargetDb = Annotated[str, Field(description='Database to copy to. Example: "app_v2"')]
+SessionName = Annotated[
+    str,
+    Field(
+        description=(
+            "Name for the Version Tracking session on the target; an open session of "
+            'that name and source is reused. Example: "v1_to_v2"'
+        )
+    ),
+]
+SaveSource = Annotated[
+    bool,
+    Field(
+        description=(
+            "Save the source first if it has unsaved changes (VT reads its saved "
+            "state); false refuses instead. Example: true"
+        )
+    ),
+]
 
 
 async def _call(pool: WorkerPoolProvider, database: str, tool: str, params: dict) -> dict:
@@ -258,6 +288,10 @@ async def find_matches(
     threshold: float,
 ) -> dict:
     """Exact (unique-hash) matches, plus fuzzy ones for algorithm="fuzzy"."""
+    if algorithm in VT_ALGORITHMS:
+        return await _vt_find_matches(
+            pool, source_db, target_db, algorithm, source_names, target_names
+        )
     exact_algo = "fid_specific" if algorithm == "fuzzy" else algorithm
     source = await _hashes(pool, source_db, exact_algo, source_names)
     target = await _hashes(pool, target_db, exact_algo, target_names)
@@ -290,6 +324,97 @@ async def find_matches(
         "fuzzy": fuzzy_count,
         "source_items": source,
         "target_items": target,
+    }
+
+
+VT_ALGORITHMS = ("vt", "bsim")
+# BSim pairs below this confidence are dropped (accepted exact seeds are kept).
+# Measured on two liblzma build pairs with debug-symbol truth: every pair under
+# 10 was wrong (11 of 11), and none above it was lost (context/matching-measurements.md).
+# 10 is also BSim's own default seed threshold.
+BSIM_MIN_CONFIDENCE = 10.0
+MATCH_SESSION = "match_functions"
+
+
+def _names_ok(is_default: bool, names: str) -> bool:
+    return names == "all" or (names == "named") != is_default
+
+
+async def vt_prepare(
+    pool, source_db: str, target_db: str, session_name: str, save_source: bool, replace: bool
+) -> dict:
+    """Open VT session *session_name* in the target worker, the source read from disk.
+
+    The target worker reads the source's SAVED state from its project, so a
+    source with unsaved changes is saved first (save_source) or refused.
+    """
+    from re_mcp_ghidra.exceptions import GhidraError  # noqa: PLC0415
+
+    if source_db == target_db:
+        raise GhidraError("Source and target are the same database.", error_type="InvalidArguments")
+    info = await _call(pool, source_db, "_vt_source_info", {})
+    if info["changed"]:
+        if not save_source:
+            raise GhidraError(
+                f"{source_db} has unsaved changes, and Version Tracking reads its saved "
+                "state. Save it (save_database) or pass save_source=true.",
+                error_type="UnsavedSource",
+            )
+        await _call(pool, source_db, "save_database", {"comment": "before version tracking"})
+    return await _call(
+        pool,
+        target_db,
+        "_vt_open",
+        {
+            "source_project": info["project"],
+            "source_program": info["program"],
+            "session_name": session_name,
+            "replace": replace,
+        },
+    )
+
+
+async def _vt_find_matches(
+    pool, source_db: str, target_db: str, algorithm: str, source_names: str, target_names: str
+) -> dict:
+    await vt_prepare(pool, source_db, target_db, MATCH_SESSION, True, True)
+    found = await _call(
+        pool, target_db, "_vt_match", {"session_name": MATCH_SESSION, "algorithm": algorithm}
+    )
+    kept = [
+        p
+        for p in found["pairs"]
+        if algorithm != "bsim"
+        or p["status"] == "accepted"
+        or p["confidence"] >= BSIM_MIN_CONFIDENCE
+    ]
+    matches = [
+        {
+            "source": {"address": p["source"], "name": p["source_name"]},
+            "target": {
+                "address": p["destination"],
+                "name": p["destination_name"],
+                "is_default_name": p["destination_is_default_name"],
+            },
+            "method": algorithm,
+            "correlators": p["correlators"],
+            "score": round(p["similarity"], 4),
+            "confidence": round(p["confidence"], 4),
+        }
+        for p in kept
+        if _names_ok(p["source_is_default_name"], source_names)
+        and _names_ok(p["destination_is_default_name"], target_names)
+    ]
+    return {
+        "matches": matches,
+        "ambiguous": 0,
+        "too_small": 0,
+        "source_hashed": 0,
+        "target_hashed": 0,
+        "fuzzy": 0,
+        "session": MATCH_SESSION,
+        "runs": found["runs"],
+        "low_confidence_dropped": len(found["pairs"]) - len(kept),
     }
 
 
@@ -419,7 +544,7 @@ def register_matching_tools(mcp: FastMCP, pool: WorkerPoolProvider) -> None:
         one-to-one similarity matches for the rest, each at least threshold and
         clearly ahead of its next-best candidate. Returns {algorithm, matched,
         fuzzy, matches: [{source: {address, name}, target: {address, name,
-        is_default_name}, method, hash | score, second_best}] (one page, by
+        is_default_name}, method, hash | score, second_best | correlators}] (one page, by
         target address), has_more, ambiguous, source_too_small, source_hashed,
         target_hashed}.
         """
@@ -443,6 +568,7 @@ def register_matching_tools(mcp: FastMCP, pool: WorkerPoolProvider) -> None:
             "source_too_small": found["too_small"],
             "source_hashed": found["source_hashed"],
             "target_hashed": found["target_hashed"],
+            **{k: found[k] for k in ("session", "low_confidence_dropped") if k in found},
         }
 
     @mcp.tool(annotations={"title": "Propagate Documentation"})
@@ -768,4 +894,130 @@ def register_matching_tools(mcp: FastMCP, pool: WorkerPoolProvider) -> None:
             "b_instructions": len(lb),
             "ops": ops[:MAX_DIFF_OPS],
             "truncated": len(ops) > MAX_DIFF_OPS,
+        }
+
+    @mcp.tool(annotations={"title": "Version Track"})
+    async def version_track(
+        source_database: SourceDb,
+        target_database: TargetDb,
+        correlators: Annotated[
+            list[
+                Literal[
+                    "exact_bytes",
+                    "exact_instructions",
+                    "exact_mnemonics",
+                    "symbol_name",
+                    "similar_symbol_name",
+                    "duplicate_symbol_name",
+                    "exact_data",
+                    "similar_data",
+                    "duplicate_data",
+                    "duplicate_function",
+                    "function_reference",
+                    "data_reference",
+                    "combined_reference",
+                    "bsim",
+                ]
+            ],
+            Field(
+                min_length=1,
+                description=(
+                    "Ghidra correlators to run, in order. Reference correlators only find "
+                    "matches next to ACCEPTED ones: accept first (apply_version_tracking), "
+                    "then version_track_correlate. bsim decompiles both programs (slow). "
+                    'Example: ["exact_bytes", "exact_instructions", "symbol_name"]'
+                ),
+            ),
+        ] = ["exact_bytes", "exact_instructions", "symbol_name", "duplicate_function"],  # noqa: B006 -- pydantic copies the default
+        session_name: SessionName = "default",
+        save_source: SaveSource = True,
+        limit: Annotated[
+            int, Field(ge=1, le=5000, description="Best-view matches to return. Example: 100")
+        ] = 100,
+    ) -> dict:
+        """Open a Ghidra Version Tracking session between two databases and correlate.
+
+        Use to port work from one build to another with Ghidra's own matching
+        and markup rules. The session lives in the TARGET database's worker
+        (the source is read from its saved project) until close_version_track
+        or the target closes. Opening it clears the target's undo history
+        (Ghidra joins the two undo stacks). Continue on the target with
+        version_track_matches, apply_version_tracking, version_track_correlate.
+        Returns {session, runs: [{correlator, matches, seconds}], matches:
+        {items (best view), total, has_more}, undo_history_cleared, warnings}.
+        """
+        opened = await vt_prepare(
+            pool, source_database, target_database, session_name, save_source, False
+        )
+        runs = await _call(
+            pool,
+            target_database,
+            "version_track_correlate",
+            {"session_name": session_name, "correlators": correlators},
+        )
+        matches = await _call(
+            pool,
+            target_database,
+            "version_track_matches",
+            {"session_name": session_name, "limit": limit},
+        )
+        return {
+            "session": session_name,
+            "reused": opened["reused"],
+            "runs": runs["runs"],
+            "matches": matches,
+            "undo_history_cleared": opened["undo_history_cleared"],
+            "warnings": opened.get("warnings", []),
+        }
+
+    @mcp.tool(annotations={"title": "Auto Version Track"})
+    async def auto_version_track(
+        source_database: SourceDb,
+        target_database: TargetDb,
+        session_name: SessionName = "auto",
+        save_source: SaveSource = True,
+        options: Annotated[
+            dict[str, bool | int | float] | None,
+            Field(
+                description=(
+                    "Ghidra Auto Version Tracking options by name; unset ones keep "
+                    "Ghidra's defaults (all correlators, implied matches, min votes 2, "
+                    "max conflicts 0, function min length 10). "
+                    'Example: {"Run Duplicate Function Correlator": false}'
+                )
+            ),
+        ] = None,
+        timeout_s: Annotated[
+            int,
+            Field(
+                ge=1,
+                le=3600,
+                description="Give up (and keep nothing) after this many seconds. Example: 600",
+            ),
+        ] = 600,
+    ) -> dict:
+        """Run Ghidra's Auto Version Tracking: correlate, accept and apply markup in one go.
+
+        Use to carry names, signatures and comments from a documented build to
+        a new one without reviewing pairs. Ghidra accepts only well-supported
+        matches and applies their markup to the TARGET as one undo step (which
+        also reverts the session's statuses). Opening the session clears the
+        target's undo history. Save the target afterwards. Returns {session,
+        status, accepted, associations: {status: count}, seconds,
+        undo_history_cleared}.
+        """
+        opened = await vt_prepare(
+            pool, source_database, target_database, session_name, save_source, False
+        )
+        result = await _call(
+            pool,
+            target_database,
+            "_vt_auto",
+            {"session_name": session_name, "options": options or {}, "timeout_s": timeout_s},
+        )
+        return {
+            "session": session_name,
+            **result,
+            "undo_history_cleared": opened["undo_history_cleared"],
+            "warnings": opened.get("warnings", []),
         }

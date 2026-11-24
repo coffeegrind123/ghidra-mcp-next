@@ -148,6 +148,7 @@ signature and documentation.
 
 | Tool | Listed | What it does |
 |---|---|---|
+| `auto_version_track` |  | Run Ghidra's Auto Version Tracking: correlate, accept and apply markup in one go. |
 | `batch` | yes | Run several tool calls in order as ONE atomic change. |
 | `call` | yes | Call any tool by name, including hidden tools not in the client tool list. |
 | `close_database` | yes | Close a database and stop its worker process. |
@@ -169,6 +170,7 @@ signature and documentation.
 | `save_database` | yes | Write the program's changes to its Ghidra project on disk. |
 | `set_repository_permission` |  | Grant, change or remove one user's access to a repository. |
 | `terminate_checkout` |  | End someone's checkout of a file on the server (admin cleanup). |
+| `version_track` |  | Open a Ghidra Version Tracking session between two databases and correlate. |
 | `wait_for_analysis` | yes | Block until a database has finished opening (and auto-analysis, if asked). |
 
 ## matching
@@ -176,9 +178,14 @@ signature and documentation.
 | Tool | Listed | What it does |
 |---|---|---|
 | `apply_function_documentation` |  | Apply exported function documentation to functions in this database. |
+| `apply_version_tracking` |  | Accept Version Tracking matches and copy their markup to the destination. |
+| `close_version_track` |  | Close a Version Tracking session and release its source program. |
 | `export_function_signatures` |  | Export per-function features for fuzzy matching against another database. |
 | `get_function_documentation` |  | Export everything that documents one function, as data. |
 | `get_function_hashes` |  | Hash functions to recognise the same code in another build or binary. |
+| `version_track_correlate` |  | Run more Version Tracking correlators in an open session. |
+| `version_track_matches` |  | List the matches of a Version Tracking session. |
+| `version_track_sessions` |  | List the Version Tracking sessions open on this (destination) database. |
 
 ## memory_blocks
 

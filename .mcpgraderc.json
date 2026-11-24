@@ -32,6 +32,11 @@
       "rule": "P009",
       "tool": "run_ghidra_script",
       "reason": "Existing GhidraScripts cannot be confined to reads; execute(read_only=true) is the read-only route."
+    },
+    {
+      "rule": "S007",
+      "tool": "version_track_matches",
+      "reason": "Its filters (view, kind, correlator, min_similarity, min_confidence, status) are independent and each optional; folding them into one object parameter makes them harder to fill, and the database parameter is added by routing."
     }
   ]
 }

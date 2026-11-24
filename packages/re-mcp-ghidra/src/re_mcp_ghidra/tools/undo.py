@@ -11,6 +11,7 @@ from pydantic import BaseModel, Field
 
 from re_mcp_ghidra.exceptions import GhidraError
 from re_mcp_ghidra.helpers import ANNO_DESTRUCTIVE
+from re_mcp_ghidra.programmable import step_name
 from re_mcp_ghidra.session import session
 
 
@@ -33,7 +34,7 @@ def register(mcp: FastMCP) -> None:
         program = session.program
         if not program.canUndo():
             raise GhidraError("Nothing to undo", error_type="UndoFailed")
-        step = str(program.getUndoName())
+        step = step_name(program, program.getUndoName())
         try:
             program.undo()
         except Exception as e:
@@ -49,7 +50,7 @@ def register(mcp: FastMCP) -> None:
         program = session.program
         if not program.canRedo():
             raise GhidraError("Nothing to redo", error_type="RedoFailed")
-        step = str(program.getRedoName())
+        step = step_name(program, program.getRedoName())
         try:
             program.redo()
         except Exception as e:
